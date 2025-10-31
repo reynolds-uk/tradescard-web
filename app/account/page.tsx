@@ -1,0 +1,292 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.NEXT_PUBLIC_API_BASE ||
+  "https://tradescard-api.vercel.app";
+
+type ApiAccount = {
+  user_id: string;
+  email: string;
+  full_name?: string | null;
+  members: null | {
+    status: string;                // active | trialing | past_due | canceled | free
+    tier: "access" | "member" | "pro" | string;
+    current_period_end: string | null; // ISO or null
+    stripe_customer_id?: string | null;
+    stripe_subscription_id?: string | null;
+  };
+};
+
+type Me = {
+  user_id: string;
+  email: string;
+  name?: string | null;
+  tier: "access" | "member" | "pro";
+  status: string;
+  renewal_date: string | null;
+};
+
+export default function AccountPage() {
+  const supabase = useMemo(
+    () =>
+      createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      ),
+    []
+  );
+
+  const [me, setMe] = useState<Me | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>("");
+
+  // normalise API shape -> UI shape
+  const mapToMe = (a: ApiAccount): Me => ({
+    user_id: a.user_id,
+    email: a.email,
+    name: a.full_name ?? null,
+    tier: (a.members?.tier as Me["tier"]) ?? "access",
+    status: a.members?.status ?? "free",
+    renewal_date: a.members?.current_period_end ?? null,
+  });
+
+  // fetch latest snapshot from your API using user_id in the query string
+  const fetchAccount = async () => {
+    setError("");
+    const { data: sessionData } = await supabase.auth.getSession();
+    const user = sessionData?.session?.user;
+    if (!user) {
+      setMe(null);
+      return;
+    }
+
+    const url = `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`;
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) {
+      const txt = await r.text();
+      throw new Error(`/api/account failed: ${r.status} ${txt}`);
+    }
+    const data: ApiAccount = await r.json();
+    setMe(mapToMe(data));
+  };
+
+  // initial load + tidy up any Stripe return params
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+        const params = new URLSearchParams(window.location.search);
+        if (params.has("status")) {
+          // remove status params from URL for a clean look
+          window.history.replaceState({}, "", window.location.pathname);
+        }
+        await fetchAccount();
+      } catch (e: any) {
+        setError(e?.message || "Something went wrong");
+      } finally {
+        setLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // start / change plan via Stripe Checkout
+  const startMembership = async (tier: "member" | "pro") => {
+    try {
+      setBusy(true);
+      setError("");
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const user = sessionData?.session?.user;
+      if (!user) {
+        alert("Please sign in first using the form at the top right.");
+        return;
+      }
+
+      const res = await fetch(`${API_BASE}/api/stripe/checkout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tier,
+          email: user.email,
+          user_id: user.id,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.url) throw new Error(json?.error || "Checkout failed");
+      window.location.href = json.url; // off to Stripe
+    } catch (e: any) {
+      setError(e.message || "Could not start checkout");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // open Stripe customer portal (API derives customer from user_id)
+  const openBillingPortal = async () => {
+    try {
+      setBusy(true);
+      setError("");
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const user = sessionData?.session?.user;
+      if (!user) {
+        alert("Please sign in first.");
+        return;
+      }
+
+      // No custom headers -> fewer CORS issues
+      const res = await fetch(`${API_BASE}/api/stripe/portal?user_id=${encodeURIComponent(user.id)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const json = await res.json();
+      if (!res.ok || !json.url) throw new Error(json?.error || "Unable to open billing portal");
+      window.location.href = json.url;
+    } catch (e: any) {
+      setError(e.message || "Failed to open billing portal");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const refresh = async () => {
+    try {
+      setLoading(true);
+      await fetchAccount();
+    } catch (e: any) {
+      setError(e?.message || "Refresh failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <main className="max-w-2xl mx-auto p-6 text-sm text-neutral-200">
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-xl font-semibold">My Account</h1>
+        <button
+          onClick={refresh}
+          className="px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
+          disabled={loading}
+        >
+          {loading ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
+
+      {error && (
+        <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300">
+          Error: {error}
+        </div>
+      )}
+
+      {loading && <p className="text-neutral-400">Loading…</p>}
+
+      {!loading && !me && (
+        <div className="rounded-lg border border-neutral-800 p-4">
+          <p className="mb-1 font-medium">You’re not signed in.</p>
+          <p className="text-neutral-400">
+            Use the sign-in form in the header, then return here.
+          </p>
+        </div>
+      )}
+
+      {!loading && me && (
+        <div className="space-y-4">
+          {/* Membership card */}
+          <div className="rounded-xl border border-neutral-800 p-4 bg-gradient-to-br from-neutral-900 to-neutral-950">
+            <div className="text-sm text-neutral-400">Membership</div>
+            <div className="mt-1 flex items-center gap-2">
+              <div className="text-xl font-semibold">TradesCard</div>
+              <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs">
+                {me.tier.toUpperCase()}
+              </span>
+              <span
+                className={`rounded px-2 py-0.5 text-xs ${
+                  me.status === "active"
+                    ? "bg-green-900/30 text-green-300"
+                    : me.status === "trialing"
+                    ? "bg-amber-900/30 text-amber-300"
+                    : "bg-neutral-800 text-neutral-300"
+                }`}
+              >
+                {me.status}
+              </span>
+            </div>
+
+            <div className="mt-3 grid gap-1">
+              <div>
+                <span className="opacity-60">Name:</span> {me.name || "—"}
+              </div>
+              <div>
+                <span className="opacity-60">Email:</span> {me.email}
+              </div>
+              <div className="truncate">
+                <span className="opacity-60">Member ID:</span> {me.user_id}
+              </div>
+              <div>
+                <span className="opacity-60">Renews:</span>{" "}
+                {me.renewal_date
+                  ? new Date(me.renewal_date).toLocaleDateString()
+                  : "—"}
+              </div>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex flex-wrap gap-2">
+            {(me.tier === "access" || me.status !== "active") && (
+              <>
+                <button
+                  onClick={() => startMembership("member")}
+                  disabled={busy}
+                  className="px-4 py-2 rounded-lg bg-amber-400 text-black font-medium disabled:opacity-60"
+                >
+                  {busy ? "Opening…" : "Join as Member (£2.99/mo)"}
+                </button>
+                <button
+                  onClick={() => startMembership("pro")}
+                  disabled={busy}
+                  className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-60"
+                >
+                  {busy ? "Opening…" : "Go Pro (£7.99/mo)"}
+                </button>
+              </>
+            )}
+
+            {me.status === "active" && (
+              <button
+                onClick={openBillingPortal}
+                disabled={busy}
+                className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-60"
+              >
+                {busy ? "Opening…" : "Manage billing"}
+              </button>
+            )}
+          </div>
+
+          {/* Helpful next steps */}
+          <div className="rounded-lg border border-neutral-800 p-4">
+            <div className="font-medium mb-1">What next?</div>
+            <ul className="list-disc list-inside text-neutral-300 space-y-1">
+              <li>
+                Browse <a className="underline" href="/">Offers</a> and start saving.
+              </li>
+              <li>
+                Check your included <a className="underline" href="/benefits">Benefits</a>.
+              </li>
+              <li>
+                Track monthly <a className="underline" href="/rewards">Rewards</a>.
+              </li>
+            </ul>
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}
