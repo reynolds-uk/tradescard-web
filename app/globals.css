@@ -1,0 +1,14 @@
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+body { @apply bg-neutral-950 text-neutral-100; }
+.container { @apply max-w-3xl mx-auto px-4; }
+.card { @apply rounded-2xl border border-neutral-800 p-6 bg-neutral-900/40 shadow; }
+.btn { @apply inline-flex items-center gap-2 rounded-lg bg-white text-black px-4 py-2 font-medium hover:bg-neutral-200 transition; }
+.input { @apply w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 outline-none focus:ring-2 focus:ring-white; }
+.label { @apply block text-sm mb-1 text-neutral-300; }
+.select { @apply input; }
+.small { @apply text-sm text-neutral-400; }
