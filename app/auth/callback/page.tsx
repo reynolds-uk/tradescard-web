@@ -29,10 +29,12 @@ function CallbackInner() {
       if (error) {
         const url = new URL(next, window.location.origin);
         url.searchParams.set('auth_error', '1');
-        router.replace(url.toString());
+        // ✅ Use only the internal path + search to satisfy typedRoutes
+        router.replace(url.pathname + url.search);
         return;
       }
 
+      // ✅ Success path remains unchanged
       router.replace(next);
     })();
   }, [router, params]);
