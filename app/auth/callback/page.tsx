@@ -5,10 +5,9 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import type { Route } from 'next';
 import { createClient } from '@supabase/supabase-js';
 
+// ✅ Runtime-only — no prerender, no cache, valid `revalidate` value
 export const dynamic = 'force-dynamic';
-export const revalidate = false;
-export const fetchCache = 'force-no-store';
-export const dynamicParams = true;
+export const revalidate = 0;
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -22,14 +21,12 @@ function CallbackInner() {
   useEffect(() => {
     (async () => {
       const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
-
       const next = (params.get('next') || '/account') as Route;
 
       if (error) {
         const url = new URL(next, window.location.origin);
         url.searchParams.set('auth_error', '1');
-        const path = (url.pathname + url.search) as Route;
-        router.replace(path);
+        router.replace((url.pathname + url.search) as Route);
         return;
       }
 
