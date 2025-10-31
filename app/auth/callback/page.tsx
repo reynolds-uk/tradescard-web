@@ -2,9 +2,9 @@
 
 import { Suspense, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import type { Route } from 'next';
 import { createClient } from '@supabase/supabase-js';
 
-// Runtime-only: prevent pre-rendering entirely
 export const dynamic = 'force-dynamic';
 export const revalidate = false;
 export const fetchCache = 'force-no-store';
@@ -21,20 +21,18 @@ function CallbackInner() {
 
   useEffect(() => {
     (async () => {
-      // Exchange the URL (?code=/#access_token=) for a session
       const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
 
-      const next = params.get('next') || '/account';
+      const next = (params.get('next') || '/account') as Route;
 
       if (error) {
         const url = new URL(next, window.location.origin);
         url.searchParams.set('auth_error', '1');
-        // ✅ Use only the internal path + search to satisfy typedRoutes
-        router.replace(url.pathname + url.search);
+        const path = (url.pathname + url.search) as Route;
+        router.replace(path);
         return;
       }
 
-      // ✅ Success path remains unchanged
       router.replace(next);
     })();
   }, [router, params]);
