@@ -1,14 +1,9 @@
-// app/layout.tsx (Server Component)
-
-// Load Tailwind layers
-import './globals.css';
-
-// Next build/runtime hints
-export const dynamic = 'force-dynamic';
+// app/layout.tsx  (Server Component)
+export const dynamic = "force-dynamic";
 export const revalidate = 0;
-export const fetchCache = 'force-no-store';
+export const fetchCache = "force-no-store";
 
-import HeaderAuth from './header-client';
+import HeaderAuth from "./header-client";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -19,7 +14,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
             <div className="flex items-center gap-3">
               <div className="h-6 w-6 rounded bg-neutral-800" aria-hidden />
-              <div className="font-semibold">TradesCard</div>
+              <a href="/" className="font-semibold hover:opacity-80">TradesCard</a>
             </div>
 
             <nav className="flex items-center gap-2 text-sm">
@@ -29,12 +24,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </nav>
 
             <div className="flex items-center gap-3">
+              <button
+                className="hidden md:inline-flex px-3 py-1 rounded bg-amber-400 text-black text-sm font-medium hover:bg-amber-300"
+                onClick={() => (window as any).tradescardFocusSignin?.()}
+              >
+                Join free
+              </button>
               <HeaderAuth />
             </div>
           </div>
         </header>
 
-        <main>{children}</main>
+        <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
       </body>
     </html>
   );
