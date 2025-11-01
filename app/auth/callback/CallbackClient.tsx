@@ -16,17 +16,43 @@ export default function CallbackClient() {
 
   useEffect(() => {
     (async () => {
-      const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
+      // Where to go once we’ve signed the user in
       const next = (params.get('next') || '/account') as Route;
 
-      if (error) {
+      // Helper: redirect with an error flag
+      const sendError = (reason: string) => {
         const url = new URL(next, window.location.origin);
-        url.searchParams.set('auth_error', '1');
+        url.searchParams.set('auth_error', reason);
         router.replace((url.pathname + url.search) as Route);
-        return;
-      }
+      };
 
-      router.replace(next);
+      try {
+        // 1) OAuth flow (?code=...)
+        const code = params.get('code');
+        if (code) {
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
+          if (error) return sendError('1');
+          return router.replace(next);
+        }
+
+        // 2) Magic Link flow (?token_hash=...&type=magiclink) – can arrive via query or hash
+        const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+        const tokenHash = params.get('token_hash') || hashParams.get('token_hash');
+        const type =
+          (params.get('type') as 'magiclink' | 'recovery' | 'invite' | null) ||
+          (hashParams.get('type') as 'magiclink' | 'recovery' | 'invite' | null);
+
+        if (tokenHash && type) {
+          const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
+          if (error) return sendError('1');
+          return router.replace(next);
+        }
+
+        // 3) Nothing we can use
+        return sendError('missing_token');
+      } catch {
+        return sendError('unexpected');
+      }
     })();
   }, [router, params]);
 
