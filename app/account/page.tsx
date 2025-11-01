@@ -1,3 +1,4 @@
+// app/account/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -13,9 +14,9 @@ type ApiAccount = {
   email: string;
   full_name?: string | null;
   members: null | {
-    status: string;                // active | trialing | past_due | canceled | free
+    status: string; // active | trialing | past_due | canceled | free
     tier: "access" | "member" | "pro" | string;
-    current_period_end: string | null; // ISO or null
+    current_period_end: string | null;
     stripe_customer_id?: string | null;
     stripe_subscription_id?: string | null;
   };
@@ -45,7 +46,6 @@ export default function AccountPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>("");
 
-  // normalise API shape -> UI shape
   const mapToMe = (a: ApiAccount): Me => ({
     user_id: a.user_id,
     email: a.email,
@@ -55,35 +55,35 @@ export default function AccountPage() {
     renewal_date: a.members?.current_period_end ?? null,
   });
 
-  // fetch latest snapshot from your API using user_id in the query string
+  async function currentUser() {
+    const { data } = await supabase.auth.getSession();
+    return data?.session?.user ?? null;
+  }
+
   const fetchAccount = async () => {
     setError("");
-    const { data: sessionData } = await supabase.auth.getSession();
-    const user = sessionData?.session?.user;
+    const user = await currentUser();
     if (!user) {
       setMe(null);
       return;
     }
-
-    const url = `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`;
-    const r = await fetch(url, { cache: "no-store" });
-    if (!r.ok) {
-      const txt = await r.text();
-      throw new Error(`/api/account failed: ${r.status} ${txt}`);
-    }
+    const r = await fetch(
+      `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
+      { cache: "no-store" }
+    );
+    if (!r.ok) throw new Error(`/api/account failed: ${r.status}`);
     const data: ApiAccount = await r.json();
     setMe(mapToMe(data));
   };
 
-  // initial load + tidy up any Stripe return params
   useEffect(() => {
     (async () => {
       try {
         setLoading(true);
-        const params = new URLSearchParams(window.location.search);
-        if (params.has("status")) {
-          // remove status params from URL for a clean look
-          window.history.replaceState({}, "", window.location.pathname);
+        // strip any Stripe return params for a clean URL
+        const url = new URL(window.location.href);
+        if (url.searchParams.has("status") || url.searchParams.has("auth_error")) {
+          window.history.replaceState({}, "", url.pathname);
         }
         await fetchAccount();
       } catch (e: any) {
@@ -95,58 +95,67 @@ export default function AccountPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // start / change plan via Stripe Checkout
-  const startMembership = async (tier: "member" | "pro") => {
-    try {
-      setBusy(true);
-      setError("");
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      const user = sessionData?.session?.user;
-      if (!user) {
-        alert("Please sign in first using the form at the top right.");
-        return;
-      }
 
-      const res = await fetch(`${API_BASE}/api/stripe/checkout`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tier,
-          email: user.email,
-          user_id: user.id,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.url) throw new Error(json?.error || "Checkout failed");
-      window.location.href = json.url; // off to Stripe
-    } catch (e: any) {
-      setError(e.message || "Could not start checkout");
-    } finally {
-      setBusy(false);
+
+
+
+// start / change plan via Stripe Checkout
+const startMembership = async (plan: "member" | "pro") => {
+  try {
+    setBusy(true);
+    setError("");
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const user = sessionData?.session?.user;
+    if (!user) {
+      alert("Please sign in first using the form at the top right.");
+      return;
     }
-  };
 
-  // open Stripe customer portal (API derives customer from user_id)
+    const res = await fetch(`${API_BASE}/api/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: user.id,
+        email: user.email,
+        plan, // <-- IMPORTANT: the API expects 'plan'
+      }),
+    });
+
+    const json = await res.json();
+    if (!res.ok || !json.url) throw new Error(json?.error || "Checkout failed");
+    window.location.href = json.url; // Redirect to Stripe
+  } catch (e: any) {
+    setError(e.message || "Could not start checkout");
+  } finally {
+    setBusy(false);
+  }
+};
+
+  // Customer billing portal
   const openBillingPortal = async () => {
     try {
       setBusy(true);
       setError("");
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      const user = sessionData?.session?.user;
+      const user = await currentUser();
       if (!user) {
         alert("Please sign in first.");
         return;
       }
 
-      // No custom headers -> fewer CORS issues
-      const res = await fetch(`${API_BASE}/api/stripe/portal?user_id=${encodeURIComponent(user.id)}`, {
+      // POST with JSON body – no query string
+      const res = await fetch(`${API_BASE}/api/stripe/portal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: user.id }),
       });
-      const json = await res.json();
-      if (!res.ok || !json.url) throw new Error(json?.error || "Unable to open billing portal");
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.url) {
+        throw new Error(json?.error || `Portal failed (${res.status})`);
+      }
       window.location.href = json.url;
     } catch (e: any) {
       setError(e.message || "Failed to open billing portal");

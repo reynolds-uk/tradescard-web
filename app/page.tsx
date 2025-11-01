@@ -2,7 +2,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import HeaderAuth from "./header-client";
 
 type Offer = {
   id: string;
@@ -134,20 +133,9 @@ export default function Home() {
   }, [tab]);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6">
-      {/* Top bar */}
-      <header className="flex items-center justify-between pb-4 border-b border-neutral-800">
-        <div className="flex items-center gap-3">
-          <div className="h-8 w-8 rounded bg-neutral-800" aria-hidden />
-          <h1 className="text-xl font-semibold">TradesCard</h1>
-        </div>
-        <div className="flex items-center gap-4">
-          <HeaderAuth />
-        </div>
-      </header>
-
+    <section className="py-4">
       {/* Tabs */}
-      <nav className="flex gap-2 pt-4">
+      <nav className="flex gap-2">
         {(["offers", "benefits", "rewards"] as const).map((k) => (
           <TabButton key={k} k={k} active={tab === k} onClick={() => setTab(k)} />
         ))}
@@ -260,6 +248,6 @@ export default function Home() {
           )}
         </div>
       )}
-    </div>
+    </section>
   );
 }
