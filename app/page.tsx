@@ -1,7 +1,7 @@
 // app/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Offer = {
   id: string;
@@ -19,18 +19,12 @@ type Benefit = {
   description?: string | null;
 };
 
-type RewardSummary = {
-  total_points?: number;
-  month?: number;
-  lifetime?: number;
-};
-
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://tradescard-api.vercel.app";
 
-type TabKey = "offers" | "benefits" | "rewards";
+type TabKey = "offers" | "benefits";
 
 function TabButton({
   k,
@@ -64,96 +58,143 @@ function SkeletonCard() {
 
 export default function Home() {
   const [tab, setTab] = useState<TabKey>("offers");
-  const [offers, setOffers] = useState<Offer[]>([]);
-  const [benefits, setBenefits] = useState<Benefit[]>([]);
-  const [summary, setSummary] = useState<RewardSummary | null>(null);
-  const [userId, setUserId] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  async function loadOffers() {
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const [offersLoading, setOffersLoading] = useState(false);
+  const [offersError, setOffersError] = useState<string | null>(null);
+
+  const [benefits, setBenefits] = useState<Benefit[]>([]);
+  const [benefitsLoading, setBenefitsLoading] = useState(false);
+  const [benefitsError, setBenefitsError] = useState<string | null>(null);
+
+  // keep a ref to the current controller so we can cancel on tab switch/unmount
+  const controllerRef = useRef<AbortController | null>(null);
+
+  async function loadOffers(force = false) {
+    if (offers.length && !force) return;
+    controllerRef.current?.abort();
+    const ctrl = new AbortController();
+    controllerRef.current = ctrl;
+
     try {
-      setLoading(true);
-      setError(null);
-      const r = await fetch(`${API_BASE}/api/offers?limit=12`, { cache: "no-store" });
+      setOffersLoading(true);
+      setOffersError(null);
+      const r = await fetch(`${API_BASE}/api/offers?limit=12`, {
+        cache: "no-store",
+        signal: ctrl.signal,
+      });
       if (!r.ok) throw new Error(`offers ${r.status}`);
       const d = await r.json();
       if (!Array.isArray(d)) throw new Error("Unexpected offers format");
       setOffers(d);
     } catch (e: any) {
-      console.error("Load offers failed:", e);
-      setError(e.message || "Failed to load offers");
+      if (e.name !== "AbortError") {
+        console.error("Load offers failed:", e);
+        setOffersError(e.message || "Failed to load offers");
+      }
     } finally {
-      setLoading(false);
+      setOffersLoading(false);
     }
   }
 
-  async function loadBenefits() {
+  async function loadBenefits(force = false) {
+    if (benefits.length && !force) return;
+    controllerRef.current?.abort();
+    const ctrl = new AbortController();
+    controllerRef.current = ctrl;
+
     try {
-      setLoading(true);
-      setError(null);
-      const r = await fetch(`${API_BASE}/api/benefits`, { cache: "no-store" });
+      setBenefitsLoading(true);
+      setBenefitsError(null);
+      const r = await fetch(`${API_BASE}/api/benefits`, {
+        cache: "no-store",
+        signal: ctrl.signal,
+      });
       if (!r.ok) throw new Error(`benefits ${r.status}`);
       const d = await r.json();
       if (!Array.isArray(d)) throw new Error("Unexpected benefits format");
       setBenefits(d);
     } catch (e: any) {
-      console.error("Load benefits failed:", e);
-      setError(e.message || "Failed to load benefits");
+      if (e.name !== "AbortError") {
+        console.error("Load benefits failed:", e);
+        setBenefitsError(e.message || "Failed to load benefits");
+      }
     } finally {
-      setLoading(false);
+      setBenefitsLoading(false);
     }
   }
 
-  async function loadSummary() {
-    if (!userId) return;
-    try {
-      setLoading(true);
-      setError(null);
-      const r = await fetch(
-        `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(userId)}`,
-        { cache: "no-store" }
-      );
-      if (!r.ok) throw new Error(`rewards ${r.status}`);
-      const d = await r.json();
-      setSummary(d);
-    } catch (e: any) {
-      console.error("Load rewards summary failed:", e);
-      setError(e.message || "Failed to load rewards");
-    } finally {
-      setLoading(false);
-    }
-  }
+  // initial prime
+  useEffect(() => {
+    loadOffers();
+    return () => controllerRef.current?.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  // lazy load per tab
   useEffect(() => {
     if (tab === "offers") loadOffers();
     if (tab === "benefits") loadBenefits();
-    // rewards loads on click so you can try different UUIDs
+    return () => controllerRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
   return (
-    <section className="py-4">
+    <div className="mx-auto max-w-5xl px-4 py-6">
+      {/* Hero / strapline */}
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold">Offers & Benefits</h1>
+        <p className="text-sm text-neutral-400">
+          Save money with member-friendly deals. Paid members also earn{" "}
+          <a className="underline" href="/rewards">rewards</a> every billing month.
+        </p>
+      </div>
+
+      {/* Rewards teaser */}
+      <div className="mb-6 rounded-lg border border-neutral-800 bg-neutral-900/60 p-4 flex items-center justify-between">
+        <div>
+          <div className="font-medium">Points win prizes</div>
+          <div className="text-sm text-neutral-400">
+            Earn points each month you’re a paid member. Higher tiers boost your entries.
+          </div>
+        </div>
+        <a
+          href="/rewards"
+          className="px-3 py-1 rounded bg-neutral-200 text-neutral-900 text-sm hover:bg-white"
+        >
+          View rewards
+        </a>
+      </div>
+
       {/* Tabs */}
       <nav className="flex gap-2">
-        {(["offers", "benefits", "rewards"] as const).map((k) => (
+        {(["offers", "benefits"] as const).map((k) => (
           <TabButton key={k} k={k} active={tab === k} onClick={() => setTab(k)} />
         ))}
       </nav>
 
-      {/* Alerts */}
-      {error && (
-        <p className="mt-6 text-red-400">⚠️ Something went wrong: {error}</p>
-      )}
-
-      {/* Offers */}
+      {/* OFFERS */}
       {tab === "offers" && (
-        <div className="mt-6 grid gap-3">
-          {loading &&
-            Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
-          {!loading &&
+        <section className="mt-6 grid gap-3">
+          {offersLoading &&
+            Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={`o-skel-${i}`} />)}
+
+          {!offersLoading && offersError && (
+            <div className="rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300">
+              ⚠️ {offersError}{" "}
+              <button
+                onClick={() => loadOffers(true)}
+                className="underline ml-2 text-red-200"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          {!offersLoading &&
+            !offersError &&
             offers.map((o) => (
-              <div
+              <article
                 key={o.id}
                 className="border border-neutral-800 rounded p-3 flex items-center justify-between hover:border-neutral-600 transition"
               >
@@ -180,22 +221,37 @@ export default function Home() {
                     </a>
                   )}
                 </div>
-              </div>
+              </article>
             ))}
-          {!loading && offers.length === 0 && (
+
+          {!offersLoading && !offersError && offers.length === 0 && (
             <p className="text-neutral-400">No offers yet.</p>
           )}
-        </div>
+        </section>
       )}
 
-      {/* Benefits */}
+      {/* BENEFITS */}
       {tab === "benefits" && (
-        <div className="mt-6 grid gap-3">
-          {loading &&
-            Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
-          {!loading &&
+        <section className="mt-6 grid gap-3">
+          {benefitsLoading &&
+            Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={`b-skel-${i}`} />)}
+
+          {!benefitsLoading && benefitsError && (
+            <div className="rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300">
+              ⚠️ {benefitsError}{" "}
+              <button
+                onClick={() => loadBenefits(true)}
+                className="underline ml-2 text-red-200"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          {!benefitsLoading &&
+            !benefitsError &&
             benefits.map((b) => (
-              <div
+              <article
                 key={b.id}
                 className="border border-neutral-800 rounded p-3 hover:border-neutral-600 transition"
               >
@@ -204,50 +260,16 @@ export default function Home() {
                 </div>
                 <div className="font-medium">{b.title}</div>
                 {b.description && (
-                  <div className="text-sm text-neutral-300 mt-1">
-                    {b.description}
-                  </div>
+                  <div className="text-sm text-neutral-300 mt-1">{b.description}</div>
                 )}
-              </div>
+              </article>
             ))}
-          {!loading && benefits.length === 0 && (
+
+          {!benefitsLoading && !benefitsError && benefits.length === 0 && (
             <p className="text-neutral-400">No benefits yet.</p>
           )}
-        </div>
+        </section>
       )}
-
-      {/* Rewards */}
-      {tab === "rewards" && (
-        <div className="mt-6">
-          <label className="text-sm text-neutral-400">Test user UUID</label>
-          <div className="flex gap-2 mt-2">
-            <input
-              value={userId}
-              onChange={(e) => setUserId(e.target.value)}
-              className="bg-neutral-900 border border-neutral-800 rounded px-3 py-2 w-full text-sm"
-              placeholder="00000000-0000-0000-0000-000000000000"
-            />
-            <button
-              onClick={loadSummary}
-              className="px-4 py-2 rounded bg-neutral-200 text-neutral-900 hover:bg-neutral-300"
-              disabled={loading || !userId}
-            >
-              {loading ? "Checking…" : "Check"}
-            </button>
-          </div>
-          {summary && (
-            <div className="mt-4 border border-neutral-800 rounded p-3">
-              <div className="font-medium">Points</div>
-              <div className="text-sm mt-1">
-                This month: {summary.month ?? summary.total_points ?? 0}
-              </div>
-              <div className="text-sm">
-                Lifetime: {summary.lifetime ?? summary.total_points ?? 0}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </section>
+    </div>
   );
 }

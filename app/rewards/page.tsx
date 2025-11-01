@@ -1,35 +1,23 @@
-'use client';
+// app/rewards/page.tsx
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
-import { fetchRewardsSummary } from '@/src/lib/api';
+import { useEffect, useMemo, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
 
 type Summary = {
-  total_points?: number;
-  month?: number;
+  month?: number;        // points this month before/after boost (your API)
   lifetime?: number;
-};
-
-type ApiAccount = {
-  user_id: string;
-  email: string;
-  full_name?: string | null;
-  members: null | {
-    status: string; // active | trialing | past_due | canceled | free
-    tier: 'access' | 'member' | 'pro' | string;
-    current_period_end: string | null;
-  };
+  total_points?: number; // fallback
+  tier?: "access" | "member" | "pro" | string;
+  boost?: number;        // optional: set this in API, else we compute client-side
 };
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
   process.env.NEXT_PUBLIC_API_BASE ||
-  'https://tradescard-api.vercel.app';
+  "https://tradescard-api.vercel.app";
 
-const DEMO_USER = '11111111-1111-1111-1111-111111111111';
-
-// Configureable tier multipliers
-const TIER_MULTIPLIER: Record<string, number> = {
+const TIER_BOOST: Record<string, number> = {
   access: 1.0,
   member: 1.25,
   pro: 1.5,
@@ -44,132 +32,161 @@ export default function RewardsPage() {
     []
   );
 
-  const [userId, setUserId] = useState<string | null>(null);
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [tier, setTier] = useState<'access' | 'member' | 'pro' | string>('access');
-  const [status, setStatus] = useState<string>('free');
   const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+  const [err, setErr] = useState<string>("");
+  const [data, setData] = useState<Summary | null>(null);
+  const [isMember, setIsMember] = useState<boolean>(false);
 
   useEffect(() => {
     (async () => {
-      setLoading(true);
-      setErr(null);
       try {
-        // Resolve user
-        const { data } = await supabase.auth.getSession();
-        const uid = data?.session?.user?.id ?? DEMO_USER;
-        setUserId(uid);
+        setLoading(true);
+        setErr("");
 
-        // Fetch rewards summary
-        const s = await fetchRewardsSummary(uid);
-        setSummary(s ?? { total_points: 0, month: 0, lifetime: 0 });
+        const { data: session } = await supabase.auth.getSession();
+        const user = session?.session?.user;
 
-        // Fetch account/tier
-        const r = await fetch(`${API_BASE}/api/account?user_id=${encodeURIComponent(uid)}`, {
-          cache: 'no-store',
-        });
-        if (r.ok) {
-          const a: ApiAccount = await r.json();
-          setTier((a.members?.tier as any) ?? 'access');
-          setStatus(a.members?.status ?? 'free');
-        } else {
-          // Non-fatal: keep defaults
-          console.warn('Account fetch failed', r.status);
+        if (!user) {
+          setErr("Please sign in to see your rewards.");
+          setLoading(false);
+          return;
         }
+
+        const res = await fetch(
+          `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(user.id)}`,
+          { cache: "no-store" }
+        );
+
+        if (res.status === 403) {
+          // back end enforces paid-only
+          setIsMember(false);
+          setLoading(false);
+          return;
+        }
+
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || "Failed to load rewards.");
+        }
+
+        const json: Summary = await res.json();
+        // if API doesn’t provide boost, compute from tier
+        const tier = (json.tier || "access").toLowerCase();
+        const boost = json.boost ?? TIER_BOOST[tier] ?? 1.0;
+
+        setData({
+          ...json,
+          tier,
+          boost,
+        });
+        // treat anything beyond access as “member”
+        setIsMember(tier !== "access");
       } catch (e: any) {
-        setErr(e?.message || 'Something went wrong');
+        setErr(e.message || "Something went wrong");
       } finally {
         setLoading(false);
       }
     })();
   }, [supabase]);
 
-  const monthBase = summary?.month ?? summary?.total_points ?? 0;
-  const lifetime = summary?.lifetime ?? summary?.total_points ?? 0;
-  const boost = TIER_MULTIPLIER[tier] ?? 1.0;
-  const monthEntries = Math.max(0, Math.round(monthBase * boost));
+  const pointsThisMonth = data?.month ?? data?.total_points ?? 0;
+  const displayBoost = data?.boost ?? 1.0;
+  const entriesThisMonth = Math.floor(pointsThisMonth * displayBoost);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
-      <header className="space-y-1">
+    <div className="space-y-6">
+      <header>
         <h1 className="text-2xl font-semibold">Rewards</h1>
         <p className="text-sm text-neutral-400">
           Earn points every month you’re a member. Higher tiers boost your points. Points win prizes — we run weekly and monthly draws.
         </p>
       </header>
 
-      {err && <p className="text-red-400">Error: {err}</p>}
-      {loading && !err && <p className="text-neutral-400">Loading…</p>}
+      {loading && <p className="text-neutral-400">Loading…</p>}
+      {err && !loading && <p className="text-red-400">Error: {err}</p>}
 
-      {!loading && !err && (
+      {!loading && !err && !isMember && (
+        <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-6">
+          <p className="text-neutral-300 mb-2">Rewards are for paid members.</p>
+          <p className="text-sm text-neutral-400">
+            Upgrade to <strong>Member</strong> (1.25× points) or <strong>Pro</strong> (1.5× points) to start collecting entries for weekly spot prizes and the monthly draw.
+          </p>
+          <div className="mt-4 flex gap-2">
+            <a
+              className="px-4 py-2 rounded-lg bg-amber-400 text-black font-medium"
+              href="/account"
+            >
+              Upgrade now
+            </a>
+            <a
+              className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700"
+              href="/"
+            >
+              See offers
+            </a>
+          </div>
+        </div>
+      )}
+
+      {!loading && !err && isMember && (
         <>
-          {/* Stat cards */}
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-5">
-              <div className="text-sm text-neutral-400">Points this month (base)</div>
-              <div className="mt-2 text-3xl font-semibold">{monthBase}</div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-6">
+              <p className="text-neutral-300">Points this month (base)</p>
+              <p className="text-4xl font-semibold mt-2">{pointsThisMonth}</p>
             </div>
-            <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-5">
-              <div className="flex items-center justify-between">
-                <div className="text-sm text-neutral-400">Tier boost</div>
-                <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs uppercase">{tier}</span>
+
+            <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-6">
+              <p className="text-neutral-300">Tier boost</p>
+              <div className="mt-2 flex items-center gap-2">
+                <p className="text-4xl font-semibold">{displayBoost.toFixed(2)}×</p>
+                <span className="rounded bg-neutral-800 px-2 py-1 text-xs uppercase">
+                  {data?.tier || "access"}
+                </span>
               </div>
-              <div className="mt-2 text-3xl font-semibold">{boost.toFixed(2)}×</div>
-              <div className="mt-1 text-xs text-neutral-500">
-                {status === 'active' ? 'Active membership' : 'Upgrade for more entries'}
-              </div>
+              <p className="text-xs text-neutral-500 mt-1">
+                Upgrade for more entries
+              </p>
             </div>
-            <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-5">
-              <div className="text-sm text-neutral-400">Entries this month</div>
-              <div className="mt-2 text-3xl font-semibold">{monthEntries}</div>
-              <div className="mt-1 text-xs text-neutral-500">Used for monthly prize draw</div>
+
+            <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-6">
+              <p className="text-neutral-300">Entries this month</p>
+              <p className="text-4xl font-semibold mt-2">{entriesThisMonth}</p>
+              <p className="text-xs text-neutral-500 mt-1">
+                Used for monthly prize draw
+              </p>
             </div>
           </div>
 
-          {/* Lifetime */}
-          <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-5">
-            <div className="text-sm text-neutral-400">Lifetime points</div>
-            <div className="mt-2 text-2xl font-semibold">{lifetime}</div>
-            <div className="mt-1 text-xs text-neutral-500">
+          <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-6">
+            <p className="text-neutral-300">Lifetime points</p>
+            <p className="text-4xl font-semibold mt-2">{data?.lifetime ?? 0}</p>
+            <p className="text-xs text-neutral-500 mt-1">
               Lifetime points help with long-term milestones and special giveaways.
-            </div>
+            </p>
           </div>
 
-          {/* How it works + CTAs */}
-          <div className="rounded-lg border border-neutral-800 p-5">
-            <div className="font-medium mb-2">How it works</div>
-            <ul className="list-disc list-inside text-neutral-300 space-y-1 text-sm">
+          <div className="rounded-xl border border-neutral-800 p-6">
+            <h2 className="font-medium mb-2">How it works</h2>
+            <ul className="list-disc list-inside text-neutral-300 space-y-1">
               <li>Earn points every billing month you’re an active member.</li>
               <li>Your tier applies a boost: Access 1×, Member 1.25×, Pro 1.5×.</li>
               <li>Points = entries. We run weekly spot prizes and a monthly draw.</li>
             </ul>
-
-            {(tier === 'access' || status !== 'active') && (
-              <div className="mt-4 flex flex-wrap gap-2">
-                <a
-                  href="/account"
-                  className="px-4 py-2 rounded-lg bg-amber-400 text-black font-medium"
-                >
-                  Upgrade to boost entries
-                </a>
-                <a
-                  href="/"
-                  className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700"
-                >
-                  See offers
-                </a>
-              </div>
-            )}
+            <div className="mt-4 flex gap-2">
+              <a className="px-4 py-2 rounded-lg bg-amber-400 text-black font-medium" href="/account">
+                Upgrade to boost entries
+              </a>
+              <a className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700" href="/">
+                See offers
+              </a>
+            </div>
           </div>
-
-          {/* Debug / visibility note */}
-          {userId === DEMO_USER && (
-            <p className="text-xs text-neutral-500">
-              Viewing demo data. Sign in to see your real points.
-            </p>
-          )}
         </>
+      )}
+
+      {!loading && !err && !data && !isMember && (
+        <p className="text-xs text-neutral-500">Viewing demo state. Sign in & upgrade to see real points.</p>
       )}
     </div>
   );

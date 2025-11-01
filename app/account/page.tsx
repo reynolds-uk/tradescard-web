@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
+import HeaderAuth from "../header-client"; // inline sign-in when logged out
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -29,6 +30,12 @@ type Me = {
   tier: "access" | "member" | "pro";
   status: string;
   renewal_date: string | null;
+};
+
+const TIER_COPY: Record<Me["tier"], { label: string; boost: string; price: string }> = {
+  access: { label: "ACCESS", boost: "1.00×", price: "£0" },
+  member: { label: "MEMBER", boost: "1.25×", price: "£2.99/mo" },
+  pro: { label: "PRO", boost: "1.50×", price: "£7.99/mo" },
 };
 
 export default function AccountPage() {
@@ -80,9 +87,14 @@ export default function AccountPage() {
     (async () => {
       try {
         setLoading(true);
-        // strip any Stripe return params for a clean URL
+        // strip any Stripe / auth params for a clean URL
         const url = new URL(window.location.href);
-        if (url.searchParams.has("status") || url.searchParams.has("auth_error")) {
+        if (
+          url.searchParams.has("status") ||
+          url.searchParams.has("success") ||
+          url.searchParams.has("canceled") ||
+          url.searchParams.has("auth_error")
+        ) {
           window.history.replaceState({}, "", url.pathname);
         }
         await fetchAccount();
@@ -95,43 +107,38 @@ export default function AccountPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // start / change plan via Stripe Checkout
+  const startMembership = async (plan: "member" | "pro") => {
+    try {
+      setBusy(true);
+      setError("");
 
+      const { data: sessionData } = await supabase.auth.getSession();
+      const user = sessionData?.session?.user;
+      if (!user) {
+        alert("Please sign in first using the form at the top right (or below).");
+        return;
+      }
 
+      const res = await fetch(`${API_BASE}/api/checkout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: user.id,
+          email: user.email,
+          plan, // IMPORTANT: your API expects 'plan'
+        }),
+      });
 
-
-
-// start / change plan via Stripe Checkout
-const startMembership = async (plan: "member" | "pro") => {
-  try {
-    setBusy(true);
-    setError("");
-
-    const { data: sessionData } = await supabase.auth.getSession();
-    const user = sessionData?.session?.user;
-    if (!user) {
-      alert("Please sign in first using the form at the top right.");
-      return;
+      const json = await res.json();
+      if (!res.ok || !json.url) throw new Error(json?.error || "Checkout failed");
+      window.location.href = json.url; // Redirect to Stripe
+    } catch (e: any) {
+      setError(e.message || "Could not start checkout");
+    } finally {
+      setBusy(false);
     }
-
-    const res = await fetch(`${API_BASE}/api/checkout`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        user_id: user.id,
-        email: user.email,
-        plan, // <-- IMPORTANT: the API expects 'plan'
-      }),
-    });
-
-    const json = await res.json();
-    if (!res.ok || !json.url) throw new Error(json?.error || "Checkout failed");
-    window.location.href = json.url; // Redirect to Stripe
-  } catch (e: any) {
-    setError(e.message || "Could not start checkout");
-  } finally {
-    setBusy(false);
-  }
-};
+  };
 
   // Customer billing portal
   const openBillingPortal = async () => {
@@ -145,7 +152,6 @@ const startMembership = async (plan: "member" | "pro") => {
         return;
       }
 
-      // POST with JSON body – no query string
       const res = await fetch(`${API_BASE}/api/stripe/portal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -175,8 +181,24 @@ const startMembership = async (plan: "member" | "pro") => {
     }
   };
 
+  const TierBadge = ({ tier }: { tier: Me["tier"] }) => (
+    <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs">{tier.toUpperCase()}</span>
+  );
+
+  const StatusBadge = ({ status }: { status: string }) => {
+    const cls =
+      status === "active"
+        ? "bg-green-900/30 text-green-300"
+        : status === "trialing"
+        ? "bg-amber-900/30 text-amber-300"
+        : status === "past_due"
+        ? "bg-red-900/30 text-red-300"
+        : "bg-neutral-800 text-neutral-300";
+    return <span className={`rounded px-2 py-0.5 text-xs ${cls}`}>{status}</span>;
+  };
+
   return (
-    <main className="max-w-2xl mx-auto p-6 text-sm text-neutral-200">
+    <main className="max-w-3xl mx-auto p-6 text-sm text-neutral-200">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-semibold">My Account</h1>
         <button
@@ -196,53 +218,68 @@ const startMembership = async (plan: "member" | "pro") => {
 
       {loading && <p className="text-neutral-400">Loading…</p>}
 
+      {/* Logged out: inline sign-in + why join */}
       {!loading && !me && (
-        <div className="rounded-lg border border-neutral-800 p-4">
-          <p className="mb-1 font-medium">You’re not signed in.</p>
-          <p className="text-neutral-400">
-            Use the sign-in form in the header, then return here.
-          </p>
+        <div className="space-y-4">
+          <div className="rounded-xl border border-neutral-800 p-4 bg-neutral-900/60">
+            <p className="font-medium mb-2">You’re not signed in.</p>
+            <p className="text-neutral-400 mb-3">Enter your email to get a magic sign-in link.</p>
+            <div className="flex flex-wrap gap-3">
+              <HeaderAuth />
+              <a className="px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700" href="/">
+                Back to offers
+              </a>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-neutral-800 p-4">
+            <h2 className="font-medium mb-2">Why become a member?</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {(["access", "member", "pro"] as const).map((t) => (
+                <div key={t} className="rounded-lg border border-neutral-800 p-4">
+                  <div className="flex items-baseline justify-between">
+                    <div className="text-sm text-neutral-400">{t === "access" ? "Free" : "Paid"}</div>
+                    <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs">{TIER_COPY[t].label}</span>
+                  </div>
+                  <div className="mt-2 text-lg font-semibold">{TIER_COPY[t].price}</div>
+                  <div className="text-xs text-neutral-500">Rewards boost: {TIER_COPY[t].boost}</div>
+                  <ul className="mt-3 space-y-1 text-neutral-300">
+                    <li>• All public offers</li>
+                    {t !== "access" ? (
+                      <>
+                        <li>• Monthly & weekly prize entries</li>
+                        <li>• Tier points boost ({TIER_COPY[t].boost})</li>
+                      </>
+                    ) : (
+                      <li>• No rewards entries</li>
+                    )}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
+      {/* Logged in: membership card + actions */}
       {!loading && me && (
         <div className="space-y-4">
           {/* Membership card */}
           <div className="rounded-xl border border-neutral-800 p-4 bg-gradient-to-br from-neutral-900 to-neutral-950">
             <div className="text-sm text-neutral-400">Membership</div>
-            <div className="mt-1 flex items-center gap-2">
+            <div className="mt-1 flex flex-wrap items-center gap-2">
               <div className="text-xl font-semibold">TradesCard</div>
-              <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs">
-                {me.tier.toUpperCase()}
-              </span>
-              <span
-                className={`rounded px-2 py-0.5 text-xs ${
-                  me.status === "active"
-                    ? "bg-green-900/30 text-green-300"
-                    : me.status === "trialing"
-                    ? "bg-amber-900/30 text-amber-300"
-                    : "bg-neutral-800 text-neutral-300"
-                }`}
-              >
-                {me.status}
-              </span>
+              <TierBadge tier={me.tier} />
+              <StatusBadge status={me.status} />
             </div>
 
             <div className="mt-3 grid gap-1">
-              <div>
-                <span className="opacity-60">Name:</span> {me.name || "—"}
-              </div>
-              <div>
-                <span className="opacity-60">Email:</span> {me.email}
-              </div>
-              <div className="truncate">
-                <span className="opacity-60">Member ID:</span> {me.user_id}
-              </div>
+              <div><span className="opacity-60">Name:</span> {me.name || "—"}</div>
+              <div><span className="opacity-60">Email:</span> {me.email}</div>
+              <div className="truncate"><span className="opacity-60">Member ID:</span> {me.user_id}</div>
               <div>
                 <span className="opacity-60">Renews:</span>{" "}
-                {me.renewal_date
-                  ? new Date(me.renewal_date).toLocaleDateString()
-                  : "—"}
+                {me.renewal_date ? new Date(me.renewal_date).toLocaleDateString() : "—"}
               </div>
             </div>
           </div>
@@ -269,13 +306,21 @@ const startMembership = async (plan: "member" | "pro") => {
             )}
 
             {me.status === "active" && (
-              <button
-                onClick={openBillingPortal}
-                disabled={busy}
-                className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-60"
-              >
-                {busy ? "Opening…" : "Manage billing"}
-              </button>
+              <>
+                <button
+                  onClick={openBillingPortal}
+                  disabled={busy}
+                  className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-60"
+                >
+                  {busy ? "Opening…" : "Manage billing"}
+                </button>
+                <a
+                  href="/rewards"
+                  className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700"
+                >
+                  View rewards
+                </a>
+              </>
             )}
           </div>
 
@@ -287,7 +332,7 @@ const startMembership = async (plan: "member" | "pro") => {
                 Browse <a className="underline" href="/">Offers</a> and start saving.
               </li>
               <li>
-                Check your included <a className="underline" href="/benefits">Benefits</a>.
+                Check your included <a className="underline" href="/">Benefits</a> on the home page.
               </li>
               <li>
                 Track monthly <a className="underline" href="/rewards">Rewards</a>.
