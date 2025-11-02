@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
+import { getSupabase } from "@/src/lib/supabaseClient";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -12,21 +12,13 @@ const API_BASE =
 
 export default function PublicOffersPage() {
   const router = useRouter();
-  const supabase = useMemo(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
-    []
-  );
-
+  const supabase = useMemo(() => getSupabase(), []);
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
     let aborted = false;
 
-    (async () => {
+    async function checkAndRedirect() {
       try {
         const { data } = await supabase.auth.getSession();
         const user = data?.session?.user ?? null;
@@ -45,10 +37,17 @@ export default function PublicOffersPage() {
       } finally {
         if (!aborted) setChecking(false);
       }
-    })();
+    }
+
+    checkAndRedirect();
+
+    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+      void checkAndRedirect();
+    });
 
     return () => {
       aborted = true;
+      sub.subscription.unsubscribe();
     };
   }, [router, supabase]);
 
@@ -61,7 +60,6 @@ export default function PublicOffersPage() {
         </p>
       </header>
 
-      {/* Keep a lightweight skeleton while we check session */}
       {checking ? (
         <div className="grid gap-4 md:grid-cols-3">
           {[...Array(6)].map((_, i) => (

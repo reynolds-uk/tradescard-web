@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
+import { getSupabase } from "@/src/lib/supabaseClient";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -12,21 +12,13 @@ const API_BASE =
 
 export default function PublicBenefitsPage() {
   const router = useRouter();
-  const supabase = useMemo(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
-    []
-  );
-
+  const supabase = useMemo(() => getSupabase(), []);
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
     let aborted = false;
 
-    (async () => {
+    async function checkAndRedirect() {
       try {
         const { data } = await supabase.auth.getSession();
         const user = data?.session?.user ?? null;
@@ -45,10 +37,18 @@ export default function PublicBenefitsPage() {
       } finally {
         if (!aborted) setChecking(false);
       }
-    })();
+    }
+
+    checkAndRedirect();
+
+    // also react to late session changes (e.g. after magic link)
+    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+      void checkAndRedirect();
+    });
 
     return () => {
       aborted = true;
+      sub.subscription.unsubscribe();
     };
   }, [router, supabase]);
 
@@ -69,7 +69,7 @@ export default function PublicBenefitsPage() {
         </div>
       ) : (
         <div className="text-neutral-400">
-          Coming soon. Join free to get early access.
+          Details launching soon. Join free to get early access.
         </div>
       )}
     </main>
