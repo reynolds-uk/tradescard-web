@@ -1,45 +1,88 @@
+// app/components/Nav.tsx
 "use client";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import HeaderAuth from "../header-client";
+import { useEffect, useMemo, useState } from "react";
+import { getSupabase } from "@/src/lib/supabaseClient";
 
-const links = [
-  { href: "/offers",   label: "Offers" },
-  { href: "/benefits", label: "Benefits" },
-  { href: "/rewards",  label: "Rewards" },
-  { href: "/account",  label: "Account" },
-];
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.NEXT_PUBLIC_API_BASE ||
+  "https://tradescard-api.vercel.app";
+
+function cx(...xs: Array<string | false | undefined>) {
+  return xs.filter(Boolean).join(" ");
+}
 
 export default function Nav() {
   const pathname = usePathname();
-  const showLinks = pathname !== "/"; // hide tabs on landing
+  const supabase = useMemo(() => getSupabase(), []);
+  const [isPaidActive, setIsPaidActive] = useState<boolean>(false);
+
+  useEffect(() => {
+    let abort = false;
+
+    (async () => {
+      try {
+        if (!supabase) return;
+        const { data } = await supabase.auth.getSession();
+        const user = data?.session?.user ?? null;
+        if (!user) {
+          if (!abort) setIsPaidActive(false);
+          return;
+        }
+
+        const r = await fetch(
+          `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
+          { cache: "no-store" }
+        );
+        if (!r.ok) throw new Error(`account ${r.status}`);
+        const a = await r.json();
+
+        const tier = (a?.members?.tier as string) ?? "access";
+        const status = a?.members?.status ?? "free";
+        if (!abort) setIsPaidActive(tier !== "access" && status === "active");
+      } catch {
+        if (!abort) setIsPaidActive(false);
+      }
+    })();
+
+    return () => {
+      abort = true;
+    };
+  }, [supabase]);
+
+  const offersHref = isPaidActive ? "/member/offers" : "/offers";
+  const benefitsHref = isPaidActive ? "/member/benefits" : "/benefits";
+  const rewardsHref = "/rewards"; // already handles state internally
+
+  const links = [
+    { href: offersHref, label: "Offers" },
+    { href: benefitsHref, label: "Benefits" },
+    { href: rewardsHref, label: "Rewards" },
+    { href: "/account", label: "Account" },
+  ];
 
   return (
-    <header className="sticky top-0 z-30 border-b border-neutral-800 bg-neutral-950/80 backdrop-blur">
-      <div className="mx-auto max-w-5xl px-4 h-14 flex items-center justify-between">
-        <div className="flex items-center gap-6">
-          <Link href="/" className="text-lg font-semibold">TradesCard</Link>
-          {showLinks && (
-            <nav className="hidden sm:flex items-center gap-2 text-sm">
-              {links.map(({ href, label }) => (
-                <Link
-                  key={href}
-                  href={href}
-                  className={`px-3 py-1 rounded transition ${
-                    pathname === href
-                      ? "bg-neutral-200 text-neutral-900"
-                      : "bg-neutral-800 text-neutral-100 hover:bg-neutral-700"
-                  }`}
-                >
-                  {label}
-                </Link>
-              ))}
-            </nav>
-          )}
-        </div>
-        <HeaderAuth />
-      </div>
-    </header>
+    <nav className="hidden md:flex items-center gap-2 text-sm">
+      {links.map(({ href, label }) => {
+        const active = pathname === href;
+        return (
+          <Link
+            key={href}
+            href={href}
+            className={cx(
+              "px-3 py-1 rounded border",
+              active
+                ? "border-neutral-700 bg-neutral-800 text-neutral-100"
+                : "border-neutral-900 bg-neutral-900 hover:bg-neutral-800 text-neutral-300"
+            )}
+          >
+            {label}
+          </Link>
+        );
+      })}
+    </nav>
   );
 }
