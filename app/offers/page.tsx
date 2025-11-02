@@ -1,100 +1,190 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
+
+type Me = {
+  user_id: string;
+  email: string;
+  tier: "access" | "member" | "pro";
+  status: string; // active | trialing | past_due | canceled | free
+};
+
+type Offer = {
+  id: string;
+  category: string;
+  title: string;
+  partner?: string | null;
+  code?: string | null;
+  link?: string | null;
+  visibility?: "public" | "access" | "member" | "pro";
+  starts_at?: string | null;
+  ends_at?: string | null;
+  is_active?: boolean | null;
+};
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://tradescard-api.vercel.app";
 
-export default function PublicOffersPage() {
-  const router = useRouter();
+export default function OffersPage() {
+  const supabase = useMemo(
+    () =>
+      createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      ),
+    []
+  );
 
-  const supabase = useMemo<SupabaseClient | null>(() => {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!url || !key) return null;
-    return createClient(url, key);
-  }, []);
-
-  const [checking, setChecking] = useState(true);
+  const [me, setMe] = useState<Me | null>(null);
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string>("");
 
   useEffect(() => {
-    let cancelled = false;
+    let aborted = false;
 
     async function run() {
-      try {
-        if (!supabase) {
-          console.debug("[offers] no supabase — skip redirect");
-          return;
-        }
+      setLoading(true);
+      setErr("");
 
+      try {
+        // session (anonymous is fine)
         const { data } = await supabase.auth.getSession();
         const user = data?.session?.user ?? null;
-        if (!user) {
-          console.debug("[offers] not signed in — keep public page");
-          return;
+
+        // account snapshot (if logged in)
+        let tier: Me["tier"] = "access";
+        let status = "free";
+        let user_id = "";
+
+        if (user) {
+          const acc = await fetch(
+            `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
+            { cache: "no-store" }
+          );
+          if (acc.ok) {
+            const a = await acc.json();
+            user_id = a?.user_id ?? user.id;
+            tier = (a?.members?.tier as Me["tier"]) ?? "access";
+            status = a?.members?.status ?? "free";
+            if (!aborted) setMe({ user_id, email: a?.email, tier, status });
+          }
+        } else {
+          setMe(null);
         }
 
-        const r = await fetch(
-          `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
-          { cache: "no-store" }
-        );
+        // decide what to show:
+        // - access or not active: show public/access catalogue
+        // - paid + active: show full catalogue
+        // If your API supports a query param, use it. Otherwise, request once and filter client-side.
+        const qs =
+          tier === "access" || status !== "active" ? "" : "?scope=full";
+        const res = await fetch(`${API_BASE}/api/offers${qs}`, {
+          cache: "no-store",
+        });
 
-        if (!r.ok) {
-          console.debug("[offers] account fetch failed", r.status);
-          return;
-        }
+        if (!res.ok) throw new Error(`offers ${res.status}`);
+        const list: Offer[] = await res.json();
 
-        const a = await r.json();
-        const tier = (a?.members?.tier as string) ?? "access";
-        const status = a?.members?.status ?? "free";
-        const eligible = tier !== "access" && status === "active";
+        const filtered =
+          tier === "access" || status !== "active"
+            ? list.filter(
+                (o) =>
+                  (o.visibility ?? "public") === "public" ||
+                  (o.visibility ?? "public") === "access"
+              )
+            : list; // full for paid
 
-        console.debug("[offers] gate", { tier, status, eligible });
-
-        if (!cancelled && eligible) {
-          // Prefer router.replace, but belt-and-braces with a window fallback.
-          router.replace("/member/offers");
-          setTimeout(() => {
-            if (!cancelled && typeof window !== "undefined") {
-              window.location.replace("/member/offers");
-            }
-          }, 0);
-        }
+        if (!aborted) setOffers(filtered);
+      } catch (e: unknown) {
+        if (!aborted)
+          setErr(e instanceof Error ? e.message : "Something went wrong");
       } finally {
-        if (!cancelled) setChecking(false);
+        if (!aborted) setLoading(false);
       }
     }
 
     run();
     return () => {
-      cancelled = true;
+      aborted = true;
     };
-  }, [router, supabase]);
+  }, [supabase]);
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-12">
-      <h1 className="text-3xl font-bold">Offers</h1>
-      <p className="mt-2 text-neutral-300">
-        Curated savings for the trade. Full catalogue for Members/Pro.
-      </p>
+    <main className="mx-auto max-w-5xl px-4 py-6">
+      <header className="mb-4">
+        <h1 className="text-2xl font-semibold">Offers</h1>
+        <p className="text-neutral-400">
+          Curated savings for the trade. {me && me.tier !== "access" && me.status === "active"
+            ? "Full catalogue unlocked."
+            : "Join to unlock the full catalogue."}
+        </p>
+      </header>
 
-      {checking ? (
-        <div className="mt-6 grid gap-4 md:grid-cols-3" aria-busy="true">
+      {err && (
+        <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 p-3 text-red-300">
+          {err}
+        </div>
+      )}
+
+      {loading && (
+        <div className="grid gap-3 md:grid-cols-3">
           {[...Array(6)].map((_, i) => (
-            <div
-              key={i}
-              className="h-24 rounded-xl border border-neutral-800 bg-neutral-900 animate-pulse"
-            />
+            <div key={i} className="h-28 rounded-xl border border-neutral-800 bg-neutral-900 animate-pulse" />
           ))}
         </div>
-      ) : (
-        <p className="mt-6 text-sm text-neutral-400">
-          Coming soon. Join free to get early access.
-        </p>
+      )}
+
+      {!loading && !err && (
+        <>
+          {offers.length === 0 ? (
+            <div className="text-neutral-400">No offers available yet. Check back soon.</div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-3">
+              {offers.map((o) => (
+                <a
+                  key={o.id}
+                  href={o.link || "#"}
+                  className="rounded-xl border border-neutral-800 bg-neutral-900 p-4 hover:bg-neutral-800"
+                  target={o.link?.startsWith("http") ? "_blank" : undefined}
+                  rel={o.link?.startsWith("http") ? "noopener noreferrer" : undefined}
+                >
+                  <div className="text-xs text-neutral-400 flex items-center justify-between">
+                    <span>{o.partner || "Partner"}</span>
+                    <span className="rounded bg-neutral-800 px-1.5 py-0.5">
+                      {o.category}
+                    </span>
+                  </div>
+                  <div className="font-medium mt-1">{o.title}</div>
+                  {o.code && (
+                    <div className="mt-1 text-xs">
+                      Code: <span className="font-mono">{o.code}</span>
+                    </div>
+                  )}
+                </a>
+              ))}
+            </div>
+          )}
+
+          {(!me || me.tier === "access" || me.status !== "active") && (
+            <div className="mt-6 rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+              <div className="font-medium mb-1">Want more?</div>
+              <p className="text-neutral-300">
+                Upgrade to <span className="font-medium">Member</span> or{" "}
+                <span className="font-medium">Pro</span> for the full catalogue.
+              </p>
+              <a
+                href="/join"
+                className="mt-3 inline-block rounded bg-amber-400 text-black font-medium px-4 py-2"
+              >
+                See membership options
+              </a>
+            </div>
+          )}
+        </>
       )}
     </main>
   );
