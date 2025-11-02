@@ -2,62 +2,43 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import HeaderAuth from "./header-client"; // your existing auth UI
+import HeaderAuth from "../header-client";
+
+const links = [
+  { href: "/offers",   label: "Offers" },
+  { href: "/benefits", label: "Benefits" },
+  { href: "/rewards",  label: "Rewards" },
+  { href: "/account",  label: "Account" },
+];
 
 export default function Nav() {
   const pathname = usePathname();
-  const supabase = createClientComponentClient();
-  const [email, setEmail] = useState<string | null>(null);
-
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => setEmail(user?.email ?? null));
-  }, [supabase]);
-
-  const active = (href: string) =>
-    pathname === href || pathname.startsWith(href + "/");
-
-  async function signOut() {
-    await supabase.auth.signOut();
-    window.location.assign("/");
-  }
+  const showLinks = pathname !== "/"; // hide tabs on landing
 
   return (
-    <header className="sticky top-0 z-30 border-b border-neutral-800 bg-black/80 backdrop-blur-md">
-      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4" data-nav="v2">
-        <Link href="/" className="text-lg font-bold tracking-tight hover:text-amber-400">
-          TradesCard
-        </Link>
-
-        {/* Only show product links when signed in */}
-        {email ? (
-          <nav className="hidden sm:flex items-center gap-2 text-sm">
-            <Link
-              href="/offers"
-              className={`px-3 py-1 rounded ${active("/offers") ? "bg-neutral-200 text-neutral-900" : "text-neutral-200 hover:bg-neutral-800"}`}
-            >
-              Offers
-            </Link>
-            <Link
-              href="/rewards"
-              className={`px-3 py-1 rounded ${active("/rewards") ? "bg-neutral-200 text-neutral-900" : "text-neutral-200 hover:bg-neutral-800"}`}
-            >
-              Rewards
-            </Link>
-            <Link
-              href="/account"
-              className={`px-3 py-1 rounded ${active("/account") ? "bg-amber-500 text-black" : "text-neutral-200 hover:bg-neutral-800"}`}
-            >
-              Account
-            </Link>
-            <button onClick={signOut} className="px-3 py-1 rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-900">
-              Sign out
-            </button>
-          </nav>
-        ) : (
-          <HeaderAuth /> // compact sign-in for guests
-        )}
+    <header className="sticky top-0 z-30 border-b border-neutral-800 bg-neutral-950/80 backdrop-blur">
+      <div className="mx-auto max-w-5xl px-4 h-14 flex items-center justify-between">
+        <div className="flex items-center gap-6">
+          <Link href="/" className="text-lg font-semibold">TradesCard</Link>
+          {showLinks && (
+            <nav className="hidden sm:flex items-center gap-2 text-sm">
+              {links.map(({ href, label }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  className={`px-3 py-1 rounded transition ${
+                    pathname === href
+                      ? "bg-neutral-200 text-neutral-900"
+                      : "bg-neutral-800 text-neutral-100 hover:bg-neutral-700"
+                  }`}
+                >
+                  {label}
+                </Link>
+              ))}
+            </nav>
+          )}
+        </div>
+        <HeaderAuth />
       </div>
     </header>
   );
