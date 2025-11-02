@@ -2,6 +2,13 @@
 "use client";
 
 import Link from "next/link";
+import { useCallback } from "react";
+
+declare global {
+  interface Window {
+    tradescardFocusSignin?: () => void;
+  }
+}
 
 type PlanProps = {
   name: string;
@@ -10,7 +17,7 @@ type PlanProps = {
   href?: string;                 // if provided we render a Link button
   onClick?: () => void;          // otherwise a <button>
   highlight?: boolean;
-  cta?: string;                  // <-- NEW: custom button label
+  cta?: string;                  // custom button label
 };
 
 function Plan({
@@ -47,9 +54,16 @@ function Plan({
 
       <div className="mt-4">
         {href ? (
-          <Link href={href}>{ButtonInner}</Link>
+          <Link href={href} aria-label={`${name} plan`}>{ButtonInner}</Link>
         ) : (
-          <button onClick={onClick} className="rounded-lg">{ButtonInner}</button>
+          <button
+            type="button"
+            onClick={onClick}
+            className="rounded-lg"
+            aria-label={`Continue with ${name}`}
+          >
+            {ButtonInner}
+          </button>
         )}
       </div>
     </div>
@@ -57,6 +71,10 @@ function Plan({
 }
 
 export default function JoinPage() {
+  const focusHeaderSignin = useCallback(() => {
+    window.tradescardFocusSignin?.();
+  }, []);
+
   return (
     <main className="mx-auto max-w-5xl px-4 py-12">
       <h1 className="text-3xl font-bold">Join TradesCard</h1>
@@ -70,7 +88,7 @@ export default function JoinPage() {
           price="£0"
           blurb="Sample offers, previews, upgrade prompts."
           cta="Continue"
-          onClick={() => (window as any).tradescardFocusSignin?.()}
+          onClick={focusHeaderSignin}
         />
         <Plan
           name="Member"

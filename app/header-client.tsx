@@ -12,11 +12,17 @@ type AccountShape = {
   email: string;
   full_name?: string | null;
   members: null | {
-    status: string; // active | trialing | past_due | canceled | free
+    status: "active" | "trialing" | "past_due" | "canceled" | "free" | string;
     tier: Tier | string;
     current_period_end: string | null;
   };
 };
+
+declare global {
+  interface Window {
+    tradescardFocusSignin?: () => void;
+  }
+}
 
 const isBrowser = typeof window !== "undefined";
 
@@ -62,12 +68,12 @@ export default function HeaderAuth() {
   // Expose a way for “Join free” links to focus the email box
   useEffect(() => {
     if (!isBrowser) return;
-    (window as any).tradescardFocusSignin = () => {
+    window.tradescardFocusSignin = () => {
       inputRef.current?.focus();
       inputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
     };
     return () => {
-      (window as any).tradescardFocusSignin = undefined;
+      window.tradescardFocusSignin = undefined;
     };
   }, []);
 
@@ -110,10 +116,15 @@ export default function HeaderAuth() {
       setTier(t);
       setStatus(s);
       setSessionEmail(a.email);
-    } catch {
+    } catch (e: unknown) {
       // Be forgiving if the API briefly fails; show “free” state
       setTier("access");
       setStatus("free");
+      // Optional: surface a soft hint in dev
+      if (process.env.NODE_ENV !== "production") {
+        // eslint-disable-next-line no-console
+        console.warn("refreshAccount failed", e);
+      }
     }
   }, []);
 
@@ -180,8 +191,9 @@ export default function HeaderAuth() {
       if (error) throw error;
       setSent(true);
       setCooldown(30);
-    } catch (e: any) {
-      setErr(e.message || "Failed to send link.");
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "Failed to send link.";
+      setErr(message);
     }
   };
 
@@ -237,7 +249,7 @@ export default function HeaderAuth() {
         className="flex items-center gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          sendMagic();
+          void sendMagic();
         }}
         aria-label="Passwordless sign in"
       >
