@@ -98,8 +98,9 @@ export default function AccountPage() {
           window.history.replaceState({}, "", url.pathname);
         }
         await fetchAccount();
-      } catch (e: any) {
-        setError(e?.message || "Something went wrong");
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Something went wrong";
+        setError(msg);
       } finally {
         setLoading(false);
       }
@@ -133,8 +134,9 @@ export default function AccountPage() {
       const json = await res.json();
       if (!res.ok || !json.url) throw new Error(json?.error || "Checkout failed");
       window.location.href = json.url; // Redirect to Stripe
-    } catch (e: any) {
-      setError(e.message || "Could not start checkout");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Could not start checkout";
+      setError(msg);
     } finally {
       setBusy(false);
     }
@@ -163,8 +165,9 @@ export default function AccountPage() {
         throw new Error(json?.error || `Portal failed (${res.status})`);
       }
       window.location.href = json.url;
-    } catch (e: any) {
-      setError(e.message || "Failed to open billing portal");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to open billing portal";
+      setError(msg);
     } finally {
       setBusy(false);
     }
@@ -174,8 +177,9 @@ export default function AccountPage() {
     try {
       setLoading(true);
       await fetchAccount();
-    } catch (e: any) {
-      setError(e?.message || "Refresh failed");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Refresh failed";
+      setError(msg);
     } finally {
       setLoading(false);
     }
