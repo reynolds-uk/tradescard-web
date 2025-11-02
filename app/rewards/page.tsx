@@ -1,7 +1,7 @@
 // app/rewards/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 type Me = {
@@ -25,15 +25,24 @@ type ApiAccount = {
 };
 
 type RewardSummary = {
-  total_points?: number;
-  month?: number;
-  lifetime?: number;
+  lifetime_points: number;
+  points_this_month: number;
 };
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://tradescard-api.vercel.app";
+
+// Normalise any legacy shapes {month,lifetime,total_points} -> {points_this_month,lifetime_points}
+function normaliseSummary(raw: any): RewardSummary {
+  return {
+    lifetime_points:
+      Number(raw?.lifetime_points ?? raw?.lifetime ?? raw?.total_points ?? 0) || 0,
+    points_this_month:
+      Number(raw?.points_this_month ?? raw?.month ?? raw?.total_points ?? 0) || 0,
+  };
+}
 
 export default function RewardsPage() {
   const supabase = useMemo(
@@ -50,6 +59,7 @@ export default function RewardsPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>("");
+  const abortRef = useRef<AbortController | null>(null);
 
   const mapToMe = (a: ApiAccount): Me => ({
     user_id: a.user_id,
@@ -68,6 +78,11 @@ export default function RewardsPage() {
   async function load() {
     setError("");
     setLoading(true);
+
+    // cancel any in-flight request on quick refresh
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+
     try {
       const user = await currentUser();
       if (!user) {
@@ -76,31 +91,35 @@ export default function RewardsPage() {
         return;
       }
 
-      // 1) Get account snapshot (tier/status)
+      // 1) Account snapshot (tier/status)
       const accRes = await fetch(
         `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
-        { cache: "no-store" }
+        { cache: "no-store", signal: abortRef.current.signal }
       );
       if (!accRes.ok) throw new Error(`account ${accRes.status}`);
       const accData: ApiAccount = await accRes.json();
       const mapped = mapToMe(accData);
       setMe(mapped);
 
-      // 2) If they’re paid/active, load points
+      // 2) Points if paid & active
       const isPaid = mapped.tier !== "access" && mapped.status === "active";
       if (isPaid) {
         const r = await fetch(
-          `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(mapped.user_id)}`,
-          { cache: "no-store" }
+          `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(
+            mapped.user_id
+          )}`,
+          { cache: "no-store", signal: abortRef.current.signal }
         );
         if (!r.ok) throw new Error(`rewards ${r.status}`);
-        const d: RewardSummary = await r.json();
-        setSummary(d);
+        const raw = await r.json();
+        setSummary(normaliseSummary(raw));
       } else {
         setSummary(null);
       }
     } catch (e: any) {
-      setError(e.message || "Something went wrong");
+      if (e?.name !== "AbortError") {
+        setError(e?.message || "Something went wrong");
+      }
     } finally {
       setLoading(false);
     }
@@ -136,15 +155,19 @@ export default function RewardsPage() {
       if (!res.ok || !json.url) throw new Error(json?.error || "Checkout failed");
       window.location.href = json.url;
     } catch (e: any) {
-      setError(e.message || "Could not start checkout");
+      setError(e?.message || "Could not start checkout");
     } finally {
       setBusy(false);
     }
   };
 
+  const refresh = () => load();
+
   const Card = ({ title, children }: { title: string; children: React.ReactNode }) => (
     <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-5">
-      <div className="text-sm text-neutral-400">{title}</div>
+      <div className="text-sm text-neutral-400 flex items-center justify-between">
+        <span>{title}</span>
+      </div>
       <div className="mt-2">{children}</div>
     </div>
   );
@@ -156,13 +179,25 @@ export default function RewardsPage() {
     </div>
   );
 
+  const tierMultiplier = (tier: Me["tier"]) =>
+    tier === "member" ? 1.25 : tier === "pro" ? 1.5 : 1;
+
   return (
     <main className="mx-auto max-w-5xl px-4 py-6 text-sm text-neutral-200">
-      <header className="mb-4">
-        <h1 className="text-2xl font-semibold">Rewards</h1>
-        <p className="text-neutral-400">
-          Earn points every month you’re a member. Higher tiers boost your points. Points win prizes — we run weekly and monthly draws.
-        </p>
+      <header className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">Rewards</h1>
+          <p className="text-neutral-400">
+            Earn points every month you’re a member. Higher tiers boost your points. Points win prizes — we run weekly and monthly draws.
+          </p>
+        </div>
+        <button
+          onClick={refresh}
+          className="rounded bg-neutral-800 hover:bg-neutral-700 px-3 py-2"
+          disabled={loading}
+        >
+          {loading ? "Refreshing…" : "Refresh"}
+        </button>
       </header>
 
       {error && (
@@ -214,8 +249,12 @@ export default function RewardsPage() {
         <>
           <section className="grid gap-3 md:grid-cols-3">
             <Card title="Points this month (base)">
-              <Stat value={String(summary?.month ?? summary?.total_points ?? 0)} label="Base points earned this billing month" />
+              <Stat
+                value={String(summary?.points_this_month ?? 0)}
+                label="Base points earned this billing month"
+              />
             </Card>
+
             <Card title="Tier boost">
               <div className="flex items-center justify-between">
                 <div className="text-2xl font-semibold">
@@ -227,13 +266,11 @@ export default function RewardsPage() {
               </div>
               <div className="text-xs text-neutral-400 mt-1">Upgrade for more entries</div>
             </Card>
+
             <Card title="Entries this month">
               <Stat
                 value={String(
-                  Math.round(
-                    (summary?.month ?? summary?.total_points ?? 0) *
-                      (me.tier === "member" ? 1.25 : me.tier === "pro" ? 1.5 : 1)
-                  )
+                  Math.round((summary?.points_this_month ?? 0) * tierMultiplier(me.tier))
                 )}
                 label="Used for monthly prize draw"
               />
@@ -243,7 +280,7 @@ export default function RewardsPage() {
           <section className="mt-4">
             <Card title="Lifetime points">
               <div className="text-3xl font-semibold">
-                {summary?.lifetime ?? summary?.total_points ?? 0}
+                {summary?.lifetime_points ?? 0}
               </div>
               <div className="text-xs text-neutral-400 mt-1">
                 Lifetime points help with long-term milestones and special giveaways.
