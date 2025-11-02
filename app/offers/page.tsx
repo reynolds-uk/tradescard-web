@@ -20,6 +20,7 @@ export default function PublicOffersPage() {
 
     async function checkAndRedirect() {
       try {
+        if (!supabase) return;
         const { data } = await supabase.auth.getSession();
         const user = data?.session?.user ?? null;
         if (!user) return;
@@ -41,13 +42,13 @@ export default function PublicOffersPage() {
 
     checkAndRedirect();
 
-    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+    const sub = supabase?.auth.onAuthStateChange(() => {
       void checkAndRedirect();
     });
 
     return () => {
       aborted = true;
-      sub.subscription.unsubscribe();
+      sub?.subscription?.unsubscribe();
     };
   }, [router, supabase]);
 

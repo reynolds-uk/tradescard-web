@@ -20,6 +20,7 @@ export default function PublicBenefitsPage() {
 
     async function checkAndRedirect() {
       try {
+        if (!supabase) return; // no auth client available
         const { data } = await supabase.auth.getSession();
         const user = data?.session?.user ?? null;
         if (!user) return;
@@ -41,14 +42,14 @@ export default function PublicBenefitsPage() {
 
     checkAndRedirect();
 
-    // also react to late session changes (e.g. after magic link)
-    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+    // react to late session changes (after magic link)
+    const sub = supabase?.auth.onAuthStateChange(() => {
       void checkAndRedirect();
     });
 
     return () => {
       aborted = true;
-      sub.subscription.unsubscribe();
+      sub?.subscription?.unsubscribe();
     };
   }, [router, supabase]);
 
