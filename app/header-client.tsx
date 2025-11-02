@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { usePathname } from "next/navigation";
 
 type Tier = "access" | "member" | "pro";
 
@@ -24,12 +25,14 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://tradescard-api.vercel.app";
 
-function classNames(...xs: Array<string | false | undefined>) {
+function cx(...xs: Array<string | false | undefined>) {
   return xs.filter(Boolean).join(" ");
 }
 
 export default function HeaderAuth() {
-  // ---- Supabase (guarded so we never build it on the server) ----
+  const pathname = usePathname();
+
+  // ---- Supabase (client-only) ----
   const supabase = useMemo<SupabaseClient | null>(() => {
     if (!isBrowser) return null;
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -94,28 +97,25 @@ export default function HeaderAuth() {
   }, [cooldown]);
 
   // Fetch current account (tier/status)
-  const refreshAccount = useCallback(
-    async (uid: string) => {
-      try {
-        const r = await fetch(
-          `${API_BASE}/api/account?user_id=${encodeURIComponent(uid)}`,
-          { cache: "no-store" }
-        );
-        if (!r.ok) throw new Error(`/api/account ${r.status}`);
-        const a: AccountShape = await r.json();
-        const t = (a.members?.tier as Tier) ?? "access";
-        const s = a.members?.status ?? (t === "access" ? "free" : "inactive");
-        setTier(t);
-        setStatus(s);
-        setSessionEmail(a.email);
-      } catch {
-        // Be forgiving if the API briefly fails; show “free” state
-        setTier("access");
-        setStatus("free");
-      }
-    },
-    []
-  );
+  const refreshAccount = useCallback(async (uid: string) => {
+    try {
+      const r = await fetch(
+        `${API_BASE}/api/account?user_id=${encodeURIComponent(uid)}`,
+        { cache: "no-store" }
+      );
+      if (!r.ok) throw new Error(`/api/account ${r.status}`);
+      const a: AccountShape = await r.json();
+      const t = (a.members?.tier as Tier) ?? "access";
+      const s = a.members?.status ?? (t === "access" ? "free" : "inactive");
+      setTier(t);
+      setStatus(s);
+      setSessionEmail(a.email);
+    } catch {
+      // Be forgiving if the API briefly fails; show “free” state
+      setTier("access");
+      setStatus("free");
+    }
+  }, []);
 
   // Initial session + subscribe to auth changes
   useEffect(() => {
@@ -153,9 +153,7 @@ export default function HeaderAuth() {
         setStatus("free");
       }
     });
-    return () => {
-      sub?.subscription?.unsubscribe();
-    };
+    return () => sub?.subscription?.unsubscribe();
   }, [supabase, refreshAccount]);
 
   // Send passwordless link
@@ -192,7 +190,6 @@ export default function HeaderAuth() {
       await supabase?.auth.signOut();
     } finally {
       setMenuOpen(false);
-      // Full reload to reset any client state
       if (isBrowser) window.location.href = "/";
     }
   };
@@ -205,31 +202,64 @@ export default function HeaderAuth() {
   };
 
   // ---------- Render ----------
+
+  // Skeleton while auth initialises
   if (loading) {
-    return <div className="text-xs text-neutral-400">Loading…</div>;
+    return (
+      <div className="flex items-center gap-2">
+        <div className="h-8 w-28 animate-pulse rounded bg-neutral-900 border border-neutral-800" />
+      </div>
+    );
   }
 
-  // Not signed in → explicit, compact email box
+  // Choose whether to show the full email box (on /join) or compact button elsewhere
+  const showInlineEmail = !userId && pathname === "/join";
+
+  // Not signed in
   if (!userId) {
+    if (!showInlineEmail) {
+      // Compact mode (default on all pages except /join)
+      return (
+        <div className="flex items-center gap-2">
+          <a
+            href="/join"
+            className="px-3 py-1 rounded bg-neutral-200 text-neutral-900 text-sm hover:bg-neutral-300"
+          >
+            Sign in / Join
+          </a>
+        </div>
+      );
+    }
+
+    // Full email box (on /join)
     return (
-      <div className="flex items-center gap-2" id="signup">
-        <span className="hidden md:inline text-xs text-neutral-400">
-          Sign in <span className="opacity-60">or</span> create free account
-        </span>
+      <form
+        className="flex items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          sendMagic();
+        }}
+        aria-label="Passwordless sign in"
+      >
+        <label htmlFor="email" className="sr-only">
+          Email address
+        </label>
         <input
+          id="email"
           ref={inputRef}
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="you@company.com"
           className="px-2 py-1 rounded bg-neutral-900 border border-neutral-800 text-sm"
-          aria-label="Email address"
+          aria-invalid={!!err}
           inputMode="email"
           autoComplete="email"
+          required
         />
         <button
-          onClick={sendMagic}
+          type="submit"
           disabled={cooldown > 0}
-          className={classNames(
+          className={cx(
             "px-3 py-1 rounded text-sm",
             cooldown > 0
               ? "bg-neutral-800 text-neutral-400 cursor-not-allowed"
@@ -239,8 +269,12 @@ export default function HeaderAuth() {
           {cooldown > 0 ? `Resend in ${cooldown}s` : "Send magic link"}
         </button>
         {sent && <span className="text-xs text-neutral-400">Check your email…</span>}
-        {err && <span className="text-xs text-red-400">Error: {err}</span>}
-      </div>
+        {err && (
+          <span role="alert" className="text-xs text-red-400">
+            Error: {err}
+          </span>
+        )}
+      </form>
     );
   }
 
@@ -252,6 +286,7 @@ export default function HeaderAuth() {
         className="flex items-center gap-2 rounded bg-neutral-900 border border-neutral-800 px-3 py-1 text-sm hover:border-neutral-700"
         aria-haspopup="menu"
         aria-expanded={menuOpen}
+        aria-controls="user-menu"
       >
         <div className="h-5 w-5 rounded bg-neutral-700" aria-hidden />
         <div className="hidden sm:flex flex-col items-start leading-tight">
@@ -259,7 +294,7 @@ export default function HeaderAuth() {
             {sessionEmail ?? "Signed in"}
           </span>
           <span
-            className={classNames(
+            className={cx(
               "text-[10px] rounded px-1 py-px",
               tier === "member" && "bg-green-900/30 text-green-300",
               tier === "pro" && "bg-amber-900/30 text-amber-300",
@@ -277,6 +312,7 @@ export default function HeaderAuth() {
 
       {menuOpen && (
         <div
+          id="user-menu"
           role="menu"
           className="absolute right-0 mt-2 w-56 rounded border border-neutral-800 bg-neutral-950 shadow-lg"
         >
@@ -289,7 +325,6 @@ export default function HeaderAuth() {
             My account
           </a>
 
-          {/* Contextual CTA depending on tier */}
           {tier === "access" ? (
             <button
               role="menuitem"
