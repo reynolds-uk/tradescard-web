@@ -16,37 +16,62 @@ export default function PublicOffersPage() {
 
   useEffect(() => {
     let aborted = false;
+    let retries = 0;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-    async function checkAndRedirect() {
+    async function eligibleRedirect() {
+      if (!supabase) return false;
+      const { data } = await supabase.auth.getSession();
+      const user = data?.session?.user ?? null;
+      if (!user) return false;
+
+      const r = await fetch(
+        `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
+        { cache: "no-store" }
+      );
+      if (!r.ok) return false;
+
+      const a = await r.json();
+      const tier = (a?.members?.tier as string) ?? "access";
+      const status = a?.members?.status ?? "free";
+      const eligible = tier !== "access" && status === "active";
+
+      if (eligible && !aborted) {
+        // Try client navigation, then force as a belt-and-braces fallback
+        router.replace("/member/offers");
+        setTimeout(() => {
+          if (typeof window !== "undefined" && window.location.pathname !== "/member/offers") {
+            window.location.href = "/member/offers";
+          }
+        }, 50);
+        return true;
+      }
+      return false;
+    }
+
+    async function run() {
       try {
-        if (!supabase) return;
-        const { data } = await supabase.auth.getSession();
-        const user = data?.session?.user ?? null;
-        if (!user) return;
-
-        const r = await fetch(
-          `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
-          { cache: "no-store" }
-        );
-        if (!r.ok) return;
-        const a = await r.json();
-        const tier = (a?.members?.tier as string) ?? "access";
-        const status = a?.members?.status ?? "free";
-        const eligible = tier !== "access" && status === "active";
-        if (!aborted && eligible) router.replace("/member/offers");
+        // quick attempt, then retry (session restore can take a tick)
+        for (retries = 0; retries < 5 && !aborted; retries += 1) {
+          const ok = await eligibleRedirect();
+          if (ok) return;
+          await new Promise((res) => (timeoutId = setTimeout(res, 150)));
+        }
       } finally {
         if (!aborted) setChecking(false);
       }
     }
 
-    checkAndRedirect();
+    void run();
 
+    // also react to late auth changes
     const listener = supabase?.auth.onAuthStateChange(() => {
-      void checkAndRedirect();
+      void eligibleRedirect();
     });
 
     return () => {
       aborted = true;
+      if (timeoutId) clearTimeout(timeoutId);
       listener?.data.subscription.unsubscribe();
     };
   }, [router, supabase]);

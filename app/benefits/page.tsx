@@ -16,38 +16,59 @@ export default function PublicBenefitsPage() {
 
   useEffect(() => {
     let aborted = false;
+    let retries = 0;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-    async function checkAndRedirect() {
+    async function eligibleRedirect() {
+      if (!supabase) return false;
+      const { data } = await supabase.auth.getSession();
+      const user = data?.session?.user ?? null;
+      if (!user) return false;
+
+      const r = await fetch(
+        `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
+        { cache: "no-store" }
+      );
+      if (!r.ok) return false;
+
+      const a = await r.json();
+      const tier = (a?.members?.tier as string) ?? "access";
+      const status = a?.members?.status ?? "free";
+      const eligible = tier !== "access" && status === "active";
+
+      if (eligible && !aborted) {
+        router.replace("/member/benefits");
+        setTimeout(() => {
+          if (typeof window !== "undefined" && window.location.pathname !== "/member/benefits") {
+            window.location.href = "/member/benefits";
+          }
+        }, 50);
+        return true;
+      }
+      return false;
+    }
+
+    async function run() {
       try {
-        if (!supabase) return;
-        const { data } = await supabase.auth.getSession();
-        const user = data?.session?.user ?? null;
-        if (!user) return;
-
-        const r = await fetch(
-          `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
-          { cache: "no-store" }
-        );
-        if (!r.ok) return;
-        const a = await r.json();
-        const tier = (a?.members?.tier as string) ?? "access";
-        const status = a?.members?.status ?? "free";
-        const eligible = tier !== "access" && status === "active";
-        if (!aborted && eligible) router.replace("/member/benefits");
+        for (retries = 0; retries < 5 && !aborted; retries += 1) {
+          const ok = await eligibleRedirect();
+          if (ok) return;
+          await new Promise((res) => (timeoutId = setTimeout(res, 150)));
+        }
       } finally {
         if (!aborted) setChecking(false);
       }
     }
 
-    checkAndRedirect();
+    void run();
 
-    // listen for late session changes (after magic link)
     const listener = supabase?.auth.onAuthStateChange(() => {
-      void checkAndRedirect();
+      void eligibleRedirect();
     });
 
     return () => {
       aborted = true;
+      if (timeoutId) clearTimeout(timeoutId);
       listener?.data.subscription.unsubscribe();
     };
   }, [router, supabase]);
