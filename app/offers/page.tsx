@@ -1,4 +1,3 @@
-// app/offers/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -42,13 +41,13 @@ export default function PublicOffersPage() {
 
     checkAndRedirect();
 
-    const sub = supabase?.auth.onAuthStateChange(() => {
+    const listener = supabase?.auth.onAuthStateChange(() => {
       void checkAndRedirect();
     });
 
     return () => {
       aborted = true;
-      sub?.subscription?.unsubscribe();
+      listener?.data.subscription.unsubscribe();
     };
   }, [router, supabase]);
 

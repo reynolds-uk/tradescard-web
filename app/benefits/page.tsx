@@ -1,4 +1,3 @@
-// app/benefits/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -20,7 +19,7 @@ export default function PublicBenefitsPage() {
 
     async function checkAndRedirect() {
       try {
-        if (!supabase) return; // no auth client available
+        if (!supabase) return;
         const { data } = await supabase.auth.getSession();
         const user = data?.session?.user ?? null;
         if (!user) return;
@@ -42,14 +41,14 @@ export default function PublicBenefitsPage() {
 
     checkAndRedirect();
 
-    // react to late session changes (after magic link)
-    const sub = supabase?.auth.onAuthStateChange(() => {
+    // listen for late session changes (after magic link)
+    const listener = supabase?.auth.onAuthStateChange(() => {
       void checkAndRedirect();
     });
 
     return () => {
       aborted = true;
-      sub?.subscription?.unsubscribe();
+      listener?.data.subscription.unsubscribe();
     };
   }, [router, supabase]);
 
