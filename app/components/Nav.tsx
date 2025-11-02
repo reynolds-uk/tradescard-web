@@ -10,63 +10,73 @@ export default function Nav() {
   const supabase = createClientComponentClient();
   const [email, setEmail] = useState<string | null>(null);
 
-  // Get current user (client-side) and store email if present
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       setEmail(user?.email ?? null);
     });
   }, [supabase]);
 
-  // Public tabs (keep this minimal and clear)
-  const links = [
-    { href: "/", label: "Home" },
-    { href: "/offers", label: "Offers" },   // change to "/benefits" if that's your live page
-    { href: "/rewards", label: "Rewards" },
-  ];
-
-  const isActive = (href: string) =>
-    href === "/" ? pathname === "/" : pathname.startsWith(href);
+  const isActive = (href: string) => pathname.startsWith(href);
 
   async function handleSignOut() {
     await supabase.auth.signOut();
-    window.location.assign("/"); // quick refresh to guest state
+    window.location.assign("/");
   }
 
   return (
-    <header className="sticky top-0 z-30 border-b border-neutral-800 bg-neutral-950/80 backdrop-blur">
-      <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
+    <header className="sticky top-0 z-30 border-b border-neutral-800 bg-black/80 backdrop-blur-md">
+      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
+        {/* Left section — brand + nav links */}
         <div className="flex items-center gap-6">
-          <Link href="/" className="text-lg font-semibold">TradesCard</Link>
+          <Link
+            href="/"
+            className="text-lg font-bold tracking-tight text-white hover:text-amber-400 transition"
+          >
+            TradesCard
+          </Link>
 
-          <nav className="hidden sm:flex items-center gap-2 text-sm">
-            {links.map(({ href, label }) => (
+          {email ? (
+            <nav className="hidden sm:flex items-center gap-2 text-sm">
               <Link
-                key={href}
-                href={href}
+                href="/offers"
                 className={`px-3 py-1 rounded transition ${
-                  isActive(href)
+                  isActive("/offers")
                     ? "bg-neutral-200 text-neutral-900"
-                    : "bg-neutral-800 text-neutral-100 hover:bg-neutral-700"
+                    : "text-neutral-200 hover:bg-neutral-800"
                 }`}
               >
-                {label}
+                Offers
               </Link>
-            ))}
-          </nav>
+              <Link
+                href="/rewards"
+                className={`px-3 py-1 rounded transition ${
+                  isActive("/rewards")
+                    ? "bg-neutral-200 text-neutral-900"
+                    : "text-neutral-200 hover:bg-neutral-800"
+                }`}
+              >
+                Rewards
+              </Link>
+            </nav>
+          ) : null}
         </div>
 
-        {/* Right-side actions: guest vs member */}
+        {/* Right section — auth state */}
         {email ? (
           <div className="flex items-center gap-2">
             <Link
               href="/account"
-              className="rounded bg-neutral-800 px-3 py-1.5 text-sm hover:bg-neutral-700"
+              className={`rounded px-3 py-1.5 text-sm transition ${
+                isActive("/account")
+                  ? "bg-amber-500 text-black"
+                  : "bg-neutral-800 text-white hover:bg-neutral-700"
+              }`}
             >
               Account
             </Link>
             <button
               onClick={handleSignOut}
-              className="rounded border border-neutral-700 px-3 py-1.5 text-sm hover:bg-neutral-900"
+              className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-900"
             >
               Sign out
             </button>
@@ -75,13 +85,13 @@ export default function Nav() {
           <div className="flex items-center gap-2">
             <Link
               href="/join"
-              className="rounded border border-amber-500/40 px-3 py-1.5 text-sm text-amber-300 hover:bg-amber-500/10"
+              className="rounded border border-amber-500/50 px-3 py-1.5 text-sm text-amber-300 hover:bg-amber-500/10 transition"
             >
               Join free
             </Link>
             <Link
               href="/pricing"
-              className="rounded bg-amber-500 px-3 py-1.5 text-sm text-black hover:bg-amber-400"
+              className="rounded bg-amber-500 px-3 py-1.5 text-sm text-black font-medium hover:bg-amber-400 transition"
             >
               Go Pro
             </Link>
