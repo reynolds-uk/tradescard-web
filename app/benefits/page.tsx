@@ -1,11 +1,77 @@
-export default function BenefitsPage() {
+// app/benefits/page.tsx
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
+
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.NEXT_PUBLIC_API_BASE ||
+  "https://tradescard-api.vercel.app";
+
+export default function PublicBenefitsPage() {
+  const router = useRouter();
+  const supabase = useMemo(
+    () =>
+      createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      ),
+    []
+  );
+
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    let aborted = false;
+
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const user = data?.session?.user ?? null;
+        if (!user) return;
+
+        const r = await fetch(
+          `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
+          { cache: "no-store" }
+        );
+        if (!r.ok) return;
+        const a = await r.json();
+        const tier = (a?.members?.tier as string) ?? "access";
+        const status = a?.members?.status ?? "free";
+        const eligible = tier !== "access" && status === "active";
+        if (!aborted && eligible) router.replace("/member/benefits");
+      } finally {
+        if (!aborted) setChecking(false);
+      }
+    })();
+
+    return () => {
+      aborted = true;
+    };
+  }, [router, supabase]);
+
   return (
-    <div className="mx-auto max-w-5xl px-4 py-12">
-      <h1 className="text-3xl font-bold">Benefits</h1>
-      <p className="mt-2 text-neutral-300">
-        Breakdown cover, wellbeing support and more.
-      </p>
-      <p className="mt-6 text-sm text-neutral-400">Details launching soon.</p>
-    </div>
+    <main className="mx-auto max-w-6xl px-4 py-6">
+      <header className="mb-4">
+        <h1 className="text-2xl font-semibold">Benefits</h1>
+        <p className="text-neutral-400">
+          Built-in protection and support. Paid members unlock the full set.
+        </p>
+      </header>
+
+      {checking ? (
+        <div className="grid gap-4 md:grid-cols-3">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="h-32 rounded-xl border border-neutral-800 bg-neutral-900 animate-pulse" />
+          ))}
+        </div>
+      ) : (
+        <div className="text-neutral-400">
+          Coming soon. Join free to get early access.
+        </div>
+      )}
+    </main>
   );
 }

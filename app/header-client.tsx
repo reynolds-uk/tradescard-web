@@ -1,6 +1,7 @@
 // app/header-client.tsx
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { usePathname } from "next/navigation";
@@ -65,6 +66,9 @@ export default function HeaderAuth() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
+  // track in-flight account request to prevent races on fast auth changes
+  const accountAbortRef = useRef<AbortController | null>(null);
+
   // Expose a way for “Join free” links to focus the email box
   useEffect(() => {
     if (!isBrowser) return;
@@ -102,12 +106,15 @@ export default function HeaderAuth() {
     return () => clearInterval(t);
   }, [cooldown]);
 
-  // Fetch current account (tier/status)
+  // Fetch current account (tier/status) with abort protection
   const refreshAccount = useCallback(async (uid: string) => {
     try {
+      accountAbortRef.current?.abort();
+      accountAbortRef.current = new AbortController();
+
       const r = await fetch(
         `${API_BASE}/api/account?user_id=${encodeURIComponent(uid)}`,
-        { cache: "no-store" }
+        { cache: "no-store", signal: accountAbortRef.current.signal }
       );
       if (!r.ok) throw new Error(`/api/account ${r.status}`);
       const a: AccountShape = await r.json();
@@ -117,10 +124,14 @@ export default function HeaderAuth() {
       setStatus(s);
       setSessionEmail(a.email);
     } catch (e: unknown) {
-      // Be forgiving if the API briefly fails; show “free” state
+      // Ignore aborts caused by rapid auth changes
+      const isAbort =
+        (typeof DOMException !== "undefined" && e instanceof DOMException && e.name === "AbortError") ||
+        ((e as { name?: string } | null)?.name === "AbortError");
+      if (isAbort) return;
+
       setTier("access");
       setStatus("free");
-      // Optional: surface a soft hint in dev
       if (process.env.NODE_ENV !== "production") {
         // eslint-disable-next-line no-console
         console.warn("refreshAccount failed", e);
@@ -130,9 +141,14 @@ export default function HeaderAuth() {
 
   // Initial session + subscribe to auth changes
   useEffect(() => {
+    let mounted = true;
+
     (async () => {
       try {
-        if (!supabase) return setLoading(false);
+        if (!supabase) {
+          if (mounted) setLoading(false);
+          return;
+        }
         const { data } = await supabase.auth.getSession();
         const u = data?.session?.user ?? null;
         if (u) {
@@ -146,7 +162,7 @@ export default function HeaderAuth() {
           setStatus("free");
         }
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     })();
 
@@ -164,7 +180,12 @@ export default function HeaderAuth() {
         setStatus("free");
       }
     });
-    return () => sub?.subscription?.unsubscribe();
+
+    return () => {
+      mounted = false;
+      sub?.subscription?.unsubscribe();
+      accountAbortRef.current?.abort();
+    };
   }, [supabase, refreshAccount]);
 
   // Send passwordless link
@@ -175,17 +196,19 @@ export default function HeaderAuth() {
       setErr("Auth initialisation failed.");
       return;
     }
-    if (!email || !/\S+@\S+\.\S+/.test(email)) {
+    const trimmed = email.trim();
+    // light validation; keep it user-friendly
+    if (!trimmed || !/^\S+@\S+\.\S+$/.test(trimmed)) {
       setErr("Enter a valid email address.");
       return;
     }
     try {
-      if (isBrowser) localStorage.setItem("tc:lastEmail", email.trim());
+      if (isBrowser) localStorage.setItem("tc:lastEmail", trimmed);
       const base =
         process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
         (isBrowser ? window.location.origin : "");
       const { error } = await supabase.auth.signInWithOtp({
-        email: email.trim(),
+        email: trimmed,
         options: { emailRedirectTo: `${base}/auth/callback` },
       });
       if (error) throw error;
@@ -197,21 +220,21 @@ export default function HeaderAuth() {
     }
   };
 
-  const signOut = async () => {
+  const signOut = useCallback(async () => {
     try {
       await supabase?.auth.signOut();
     } finally {
       setMenuOpen(false);
       if (isBrowser) window.location.href = "/";
     }
-  };
+  }, [supabase]);
 
-  const goUpgrade = () => {
+  const goUpgrade = useCallback(() => {
     if (isBrowser) window.location.href = "/account#upgrade";
-  };
-  const goManage = () => {
+  }, []);
+  const goManage = useCallback(() => {
     if (isBrowser) window.location.href = "/account#billing";
-  };
+  }, []);
 
   // ---------- Render ----------
 
@@ -233,12 +256,12 @@ export default function HeaderAuth() {
       // Compact mode (default on all pages except /join)
       return (
         <div className="flex items-center gap-2">
-          <a
+          <Link
             href="/join"
             className="px-3 py-1 rounded bg-neutral-200 text-neutral-900 text-sm hover:bg-neutral-300"
           >
             Sign in / Join
-          </a>
+          </Link>
         </div>
       );
     }
@@ -328,14 +351,14 @@ export default function HeaderAuth() {
           role="menu"
           className="absolute right-0 mt-2 w-56 rounded border border-neutral-800 bg-neutral-950 shadow-lg"
         >
-          <a
+          <Link
             href="/account"
             role="menuitem"
             className="block px-3 py-2 text-sm hover:bg-neutral-900"
             onClick={() => setMenuOpen(false)}
           >
             My account
-          </a>
+          </Link>
 
           {tier === "access" ? (
             <button
@@ -355,14 +378,14 @@ export default function HeaderAuth() {
             </button>
           )}
 
-          <a
+          <Link
             href="/rewards"
             role="menuitem"
             className="block px-3 py-2 text-sm hover:bg-neutral-900"
             onClick={() => setMenuOpen(false)}
           >
             Rewards
-          </a>
+          </Link>
 
           <div className="my-1 border-t border-neutral-900" />
 

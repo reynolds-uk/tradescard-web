@@ -2,34 +2,38 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { getSupabase } from "@/src/lib/supabaseClient";
+import { createClient } from "@supabase/supabase-js";
+import HeaderAuth from "../header-client";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://tradescard-api.vercel.app";
 
-function cx(...xs: Array<string | false | undefined>) {
-  return xs.filter(Boolean).join(" ");
-}
+type Elig = { eligible: boolean; email?: string | null; status?: string | null; tier?: string | null };
 
 export default function Nav() {
-  const pathname = usePathname();
-  const supabase = useMemo(() => getSupabase(), []);
-  const [isPaidActive, setIsPaidActive] = useState<boolean>(false);
+  const supabase = useMemo(
+    () =>
+      createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      ),
+    []
+  );
+
+  const [elig, setElig] = useState<Elig>({ eligible: false });
 
   useEffect(() => {
-    let abort = false;
+    let aborted = false;
 
     (async () => {
       try {
-        if (!supabase) return;
         const { data } = await supabase.auth.getSession();
         const user = data?.session?.user ?? null;
         if (!user) {
-          if (!abort) setIsPaidActive(false);
+          if (!aborted) setElig({ eligible: false });
           return;
         }
 
@@ -37,52 +41,66 @@ export default function Nav() {
           `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
           { cache: "no-store" }
         );
-        if (!r.ok) throw new Error(`account ${r.status}`);
+        if (!r.ok) {
+          if (!aborted) setElig({ eligible: false, email: user.email ?? null });
+          return;
+        }
         const a = await r.json();
-
         const tier = (a?.members?.tier as string) ?? "access";
         const status = a?.members?.status ?? "free";
-        if (!abort) setIsPaidActive(tier !== "access" && status === "active");
+        const eligible = tier !== "access" && status === "active";
+        if (!aborted) setElig({ eligible, email: user.email ?? null, tier, status });
       } catch {
-        if (!abort) setIsPaidActive(false);
+        if (!aborted) setElig({ eligible: false });
       }
     })();
 
     return () => {
-      abort = true;
+      aborted = true;
     };
   }, [supabase]);
 
-  const offersHref = isPaidActive ? "/member/offers" : "/offers";
-  const benefitsHref = isPaidActive ? "/member/benefits" : "/benefits";
-  const rewardsHref = "/rewards"; // already handles state internally
-
-  const links = [
-    { href: offersHref, label: "Offers" },
-    { href: benefitsHref, label: "Benefits" },
-    { href: rewardsHref, label: "Rewards" },
-    { href: "/account", label: "Account" },
-  ];
+  const offersHref = elig.eligible ? "/member/offers" : "/offers";
+  const benefitsHref = elig.eligible ? "/member/benefits" : "/benefits";
 
   return (
-    <nav className="hidden md:flex items-center gap-2 text-sm">
-      {links.map(({ href, label }) => {
-        const active = pathname === href;
-        return (
+    <header className="border-b border-neutral-900/60">
+      <div className="mx-auto max-w-5xl px-4 py-3 flex items-center gap-3">
+        <Link href="/" className="font-semibold tracking-tight">
+          TradesCard
+        </Link>
+
+        <nav className="ml-4 flex items-center gap-2 text-sm">
           <Link
-            key={href}
-            href={href}
-            className={cx(
-              "px-3 py-1 rounded border",
-              active
-                ? "border-neutral-700 bg-neutral-800 text-neutral-100"
-                : "border-neutral-900 bg-neutral-900 hover:bg-neutral-800 text-neutral-300"
-            )}
+            href={offersHref}
+            className="rounded bg-neutral-900 px-2 py-1 hover:bg-neutral-800"
           >
-            {label}
+            Offers
           </Link>
-        );
-      })}
-    </nav>
+          <Link
+            href={benefitsHref}
+            className="rounded bg-neutral-900 px-2 py-1 hover:bg-neutral-800"
+          >
+            Benefits
+          </Link>
+          <Link
+            href="/rewards"
+            className="rounded bg-neutral-900 px-2 py-1 hover:bg-neutral-800"
+          >
+            Rewards
+          </Link>
+          <Link
+            href="/account"
+            className="rounded bg-neutral-900 px-2 py-1 hover:bg-neutral-800"
+          >
+            Account
+          </Link>
+        </nav>
+
+        <div className="ml-auto">
+          <HeaderAuth />
+        </div>
+      </div>
+    </header>
   );
 }

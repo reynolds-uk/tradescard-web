@@ -34,7 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="bg-neutral-950 text-neutral-100">
         <Nav />
-        <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
+        {children}
         <BuildStamp />
       </body>
     </html>
