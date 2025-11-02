@@ -34,13 +34,26 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://tradescard-api.vercel.app";
 
+// Helpers to avoid `any`
+function toNumber(v: unknown): number {
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
 // Normalise any legacy shapes {month,lifetime,total_points} -> {points_this_month,lifetime_points}
-function normaliseSummary(raw: any): RewardSummary {
+function normaliseSummary(raw: unknown): RewardSummary {
+  const obj = (raw && typeof raw === "object") ? (raw as Record<string, unknown>) : {};
+  const lifetime =
+    toNumber(obj["lifetime_points"] ?? obj["lifetime"] ?? obj["total_points"]);
+  const month =
+    toNumber(obj["points_this_month"] ?? obj["month"] ?? obj["total_points"]);
   return {
-    lifetime_points:
-      Number(raw?.lifetime_points ?? raw?.lifetime ?? raw?.total_points ?? 0) || 0,
-    points_this_month:
-      Number(raw?.points_this_month ?? raw?.month ?? raw?.total_points ?? 0) || 0,
+    lifetime_points: lifetime || 0,
+    points_this_month: month || 0,
   };
 }
 
@@ -116,9 +129,15 @@ export default function RewardsPage() {
       } else {
         setSummary(null);
       }
-    } catch (e: any) {
-      if (e?.name !== "AbortError") {
-        setError(e?.message || "Something went wrong");
+    } catch (e: unknown) {
+      // Ignore aborts; surface everything else
+      const isAbort =
+        (typeof DOMException !== "undefined" && e instanceof DOMException && e.name === "AbortError") ||
+        // Some environments throw generic Errors with name "AbortError"
+        ((e as { name?: string } | null)?.name === "AbortError");
+      if (!isAbort) {
+        const msg = e instanceof Error ? e.message : "Something went wrong";
+        setError(msg);
       }
     } finally {
       setLoading(false);
@@ -154,8 +173,9 @@ export default function RewardsPage() {
       const json = await res.json();
       if (!res.ok || !json.url) throw new Error(json?.error || "Checkout failed");
       window.location.href = json.url;
-    } catch (e: any) {
-      setError(e?.message || "Could not start checkout");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Could not start checkout";
+      setError(msg);
     } finally {
       setBusy(false);
     }

@@ -73,8 +73,9 @@ export default function MemberOffersPage() {
           // soft fallback (shows page, keeps UX smooth)
           if (!aborted) setError("Could not load offers yet. Please try again shortly.");
         }
-      } catch (e: any) {
-        if (!aborted) setError(e?.message || "Something went wrong");
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Something went wrong";
+        if (!aborted) setError(msg);
       } finally {
         if (!aborted) setLoading(false);
       }
@@ -90,9 +91,7 @@ export default function MemberOffersPage() {
     <main className="mx-auto max-w-6xl px-4 py-6">
       <header className="mb-4">
         <h1 className="text-2xl font-semibold">Member Offers</h1>
-        <p className="text-neutral-400">
-          Exclusive and early-access deals for paid members.
-        </p>
+        <p className="text-neutral-400">Exclusive and early-access deals for paid members.</p>
       </header>
 
       {loading && (

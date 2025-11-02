@@ -15,7 +15,7 @@ type Benefit = {
   name: string;
   summary?: string | null;
   provider?: string | null;
-  href?: string | null;         // docs / claim flow
+  href?: string | null; // docs / claim flow
 };
 
 export default function MemberBenefitsPage() {
@@ -71,8 +71,9 @@ export default function MemberBenefitsPage() {
         } else {
           if (!aborted) setError("Could not load benefits yet. Please try again shortly.");
         }
-      } catch (e: any) {
-        if (!aborted) setError(e?.message || "Something went wrong");
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Something went wrong";
+        if (!aborted) setError(msg);
       } finally {
         if (!aborted) setLoading(false);
       }
@@ -88,9 +89,7 @@ export default function MemberBenefitsPage() {
     <main className="mx-auto max-w-6xl px-4 py-6">
       <header className="mb-4">
         <h1 className="text-2xl font-semibold">Member Benefits</h1>
-        <p className="text-neutral-400">
-          Included protection and support for paid members.
-        </p>
+        <p className="text-neutral-400">Included protection and support for paid members.</p>
       </header>
 
       {loading && (
