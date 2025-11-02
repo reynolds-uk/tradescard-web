@@ -1,11 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": [
-      "DOM",
-      "DOM.Iterable",
-      "ESNext"
-    ],
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "jsx": "preserve",
@@ -16,30 +12,18 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "incremental": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowJs": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": [
-        "./*"
-      ], // generic root alias (keeps things simple)
-      "@/src/*": [
-        "./src/*"
-      ], // backward-compat with existing imports
-      "@/lib/*": [
-        "./src/lib/*"
-      ], // preferred going forward: "@/lib/..."
-      "@/components/*": [
-        "./src/components/*"
-      ]
+      "@/*": ["*"],
+      "@/app/*": ["app/*"],
+      "@/src/*": ["src/*"],
+      "@/lib/*": ["src/lib/*"],
+      "@/components/*": ["src/components/*"]
     },
-    "types": [
-      "node"
-    ],
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ],
-    "allowJs": true
+    "types": ["node"],
+    "plugins": [{ "name": "next" }]
   },
   "include": [
     "next-env.d.ts",
@@ -48,7 +32,5 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],
-  "exclude": [
-    "node_modules"
-  ]
+  "exclude": ["node_modules"]
 }
