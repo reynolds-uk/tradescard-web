@@ -201,7 +201,6 @@ export default function AccountPage() {
     return <span className={`rounded px-2 py-0.5 text-xs ${cls}`}>{status}</span>;
   };
 
-  const eligible = !!me && me.tier !== "access" && me.status === "active";
   const offersHref = "/offers";
   const benefitsHref = "/benefits";
 
