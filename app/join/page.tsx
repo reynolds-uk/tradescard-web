@@ -18,23 +18,27 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://tradescard-api.vercel.app";
 
+// ---------- Types
+type Tier = "access" | "member" | "pro";
+
 type Me = {
   user_id: string;
   email: string;
-  tier: "access" | "member" | "pro";
+  tier: Tier;
   status: string;
-} | null;
+};
 
 type ApiAccount = {
   user_id: string;
   email: string;
   members: null | {
     status: string;
-    tier: "access" | "member" | "pro";
+    tier: Tier;
     current_period_end: string | null;
   };
 };
 
+// ---------- UI bits
 function Badge({ children }: { children: string }) {
   return (
     <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs">
@@ -78,7 +82,7 @@ function PlanCard({
     </span>
   );
 
-  const Content = (
+  return (
     <div className={cardClass} aria-disabled={disabled}>
       {ribbon && (
         <span className="absolute right-3 -top-2 rounded bg-neutral-800 text-[11px] px-2 py-0.5">
@@ -113,10 +117,9 @@ function PlanCard({
       </div>
     </div>
   );
-
-  return Content;
 }
 
+// ---------- Page
 export default function JoinPage() {
   const supabase = useMemo(
     () =>
@@ -127,7 +130,7 @@ export default function JoinPage() {
     []
   );
 
-  const [me, setMe] = useState<Me>(null);
+  const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -141,6 +144,7 @@ export default function JoinPage() {
       try {
         setLoading(true);
         setError("");
+
         const { data } = await supabase.auth.getSession();
         const user = data?.session?.user ?? null;
 
@@ -156,11 +160,14 @@ export default function JoinPage() {
         if (!r.ok) throw new Error(`/api/account ${r.status}`);
         const acc: ApiAccount = await r.json();
 
+        const tier: Tier = acc.members?.tier ?? "access";
+        const status = acc.members?.status ?? "free";
+
         setMe({
           user_id: acc.user_id,
           email: acc.email,
-          tier: (acc.members?.tier as Me["tier"]) ?? "access",
-          status: acc.members?.status ?? "free",
+          tier,
+          status,
         });
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Something went wrong";
@@ -176,11 +183,12 @@ export default function JoinPage() {
     try {
       setBusy(true);
       setError("");
+
       const { data } = await supabase.auth.getSession();
       const user = data?.session?.user ?? null;
 
       if (!user) {
-        // Not signed in – send to pricing (or focus header signin)
+        // Not signed in: bring the header email box into focus
         focusHeaderSignin();
         return;
       }
@@ -202,7 +210,7 @@ export default function JoinPage() {
     }
   };
 
-  // Derive CTAs by state
+  // Derived state
   const isLoggedOut = !loading && !me;
   const isActive = me?.status === "active";
   const onMember = me?.tier === "member" && isActive;
@@ -255,7 +263,9 @@ export default function JoinPage() {
               : "Choose Member"
           }
           disabled={onMember || busy}
-          onClick={() => (isLoggedOut ? (window.location.href = "/pricing") : startMembership("member"))}
+          onClick={() =>
+            isLoggedOut ? (window.location.href = "/pricing") : startMembership("member")
+          }
           ribbon={onMember ? "Current" : null}
         />
 
@@ -274,10 +284,14 @@ export default function JoinPage() {
               ? "Choose Pro"
               : onPro
               ? "Current plan"
-              : (me?.tier === "member" ? "Upgrade to Pro" : "Choose Pro")
+              : me?.tier === "member"
+              ? "Upgrade to Pro"
+              : "Choose Pro"
           }
           disabled={onPro || busy}
-          onClick={() => (isLoggedOut ? (window.location.href = "/pricing") : startMembership("pro"))}
+          onClick={() =>
+            isLoggedOut ? (window.location.href = "/pricing") : startMembership("pro")
+          }
           ribbon={onPro ? "Current" : "Best value"}
         />
       </div>
