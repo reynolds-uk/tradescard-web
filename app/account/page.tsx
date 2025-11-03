@@ -111,7 +111,7 @@ export default function AccountPage() {
     });
     if (!accRes.ok) throw new Error(`/api/account failed: ${accRes.status}`);
     const acc: ApiAccount = await accRes.json();
-    setMe(mapToMe(acc, (user as any)?.created_at ?? null));
+    setMe(mapToMe(acc, user?.created_at ?? null));
 
     // Rewards summary
     const rw = await fetch(
