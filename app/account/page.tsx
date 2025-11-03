@@ -1,10 +1,9 @@
-// app/account/page.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
-import Container from "../components/Container";
-import PageHeader from "../components/PageHeader";
+import Container from "@/components/Container";
+import PageHeader from "@/components/PageHeader";
 import HeaderAuth from "../header-client";
 
 const API_BASE =
@@ -42,10 +41,11 @@ const TIER_COPY: Record<Me["tier"], { label: string; boost: string; priceShort: 
 
 export default function AccountPage() {
   const supabase = useMemo(
-    () => createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    ),
+    () =>
+      createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      ),
     []
   );
 
@@ -54,7 +54,7 @@ export default function AccountPage() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>("");
+  const [error, setError] = useState("");
 
   const mapToMe = (a: ApiAccount): Me => ({
     user_id: a.user_id,
@@ -72,7 +72,6 @@ export default function AccountPage() {
 
   async function fetchAccount() {
     setError("");
-
     abortRef.current?.abort();
     abortRef.current = new AbortController();
 
@@ -87,20 +86,19 @@ export default function AccountPage() {
       { cache: "no-store", signal: abortRef.current.signal }
     );
     if (!r.ok) throw new Error(`/api/account failed: ${r.status}`);
-    const data: ApiAccount = await r.json();
-    setMe(mapToMe(data));
+    const acc: ApiAccount = await r.json();
+    setMe(mapToMe(acc));
   }
 
   useEffect(() => {
     (async () => {
       try {
         setLoading(true);
-
-        // Clean Stripe/auth query params for a tidy URL
+        // Clean Stripe/auth params
         const url = new URL(window.location.href);
-        const hadParams = ["status", "success", "canceled", "auth_error"].some((k) => url.searchParams.has(k));
-        if (hadParams) window.history.replaceState({}, "", url.pathname);
-
+        if (["status", "success", "canceled", "auth_error"].some((k) => url.searchParams.has(k))) {
+          window.history.replaceState({}, "", url.pathname);
+        }
         await fetchAccount();
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Something went wrong";
@@ -114,7 +112,6 @@ export default function AccountPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Start / change plan via Stripe Checkout
   const startMembership = async (plan: "member" | "pro") => {
     try {
       setBusy(true);
@@ -130,6 +127,7 @@ export default function AccountPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: user.id, email: user.email, plan }),
+        keepalive: true,
       });
 
       const json = await res.json().catch(() => ({}));
@@ -143,7 +141,6 @@ export default function AccountPage() {
     }
   };
 
-  // Stripe Billing Portal
   const openBillingPortal = async () => {
     try {
       setBusy(true);
@@ -270,8 +267,8 @@ export default function AccountPage() {
 
       {/* Logged in */}
       {!loading && me && (
-        <div className="space-y-5">
-          {/* Membership card */}
+        <div className="space-y-6">
+          {/* Summary card */}
           <div className="rounded-xl border border-neutral-800 p-5 bg-gradient-to-br from-neutral-900 to-neutral-950">
             <div className="text-sm text-neutral-400">Membership</div>
             <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -306,10 +303,13 @@ export default function AccountPage() {
             </div>
           </div>
 
-          {/* Actions */}
-          <div className="flex flex-wrap gap-2">
+          {/* Plan actions (clear upgrade/downgrade paths) */}
+          <div className="rounded-xl border border-neutral-800 p-5">
+            <div className="font-medium mb-3">Plan actions</div>
+
+            {/* Access / not active -> join */}
             {(me.tier === "access" || me.status !== "active") && (
-              <>
+              <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => startMembership("member")}
                   disabled={busy}
@@ -324,70 +324,65 @@ export default function AccountPage() {
                 >
                   {busy ? "Opening…" : "Go Pro (£7.99/mo)"}
                 </button>
-              </>
+              </div>
             )}
 
-            {me.status === "active" && (
-              <>
-                {me.tier === "member" && (
-                  <button
-                    onClick={() => startMembership("pro")}
-                    disabled={busy}
-                    className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-60"
-                  >
-                    {busy ? "Opening…" : "Upgrade to Pro"}
-                  </button>
-                )}
+            {/* Member -> upgrade / billing */}
+            {me.status === "active" && me.tier === "member" && (
+              <div className="flex flex-wrap gap-2">
                 <button
-                  onClick={openBillingPortal}
+                  onClick={() => startMembership("pro")}
                   disabled={busy}
                   className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-60"
                 >
-                  {busy ? "Opening…" : "Manage billing"}
+                  {busy ? "Opening…" : "Upgrade to Pro"}
                 </button>
-                <a href="/rewards" className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700">
-                  View rewards
-                </a>
-              </>
+                <button
+                  onClick={openBillingPortal}
+                  disabled={busy}
+                  className="px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
+                >
+                  {busy ? "Opening…" : "Manage billing / cancel"}
+                </button>
+              </div>
             )}
 
+            {/* Pro -> downgrade / billing */}
+            {me.status === "active" && me.tier === "pro" && (
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => startMembership("member")}
+                  disabled={busy}
+                  className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-60"
+                >
+                  {busy ? "Opening…" : "Switch to Member"}
+                </button>
+                <button
+                  onClick={openBillingPortal}
+                  disabled={busy}
+                  className="px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
+                >
+                  {busy ? "Opening…" : "Manage billing / cancel"}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Shortcuts */}
+          <div className="flex flex-wrap gap-2">
+            <a href="/rewards" className="px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800">
+              View rewards
+            </a>
             <a href={offersHref} className="px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800">
               Browse offers
             </a>
             <a href={benefitsHref} className="px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800">
               View benefits
             </a>
-
             <button onClick={signOut} className="ml-auto px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800">
               Sign out
             </button>
           </div>
-
-          {/* Quick links / guidance */}
-          <div className="rounded-xl border border-neutral-800 p-5">
-            <div className="font-medium mb-2">What next?</div>
-            <ul className="list-disc list-inside text-neutral-300 space-y-1">
-              <li>Save on fuel, tools and food with the latest offers.</li>
-              <li>Check your included protection and support in Benefits.</li>
-              <li>Each month your entries are calculated automatically in Rewards.</li>
-            </ul>
-          </div>
-
-          {/* Wallet placeholders (wire later) */}
-          {eligible && (
-            <div className="rounded-xl border border-neutral-800 p-5">
-              <div className="font-medium mb-2">Digital card</div>
-              <p className="text-neutral-400 mb-3">Add your TradesCard to Apple or Google Wallet.</p>
-              <div className="flex flex-wrap gap-2">
-                <button disabled className="px-4 py-2 rounded-lg bg-neutral-900 text-neutral-500">
-                  Add to Apple Wallet (soon)
-                </button>
-                <button disabled className="px-4 py-2 rounded-lg bg-neutral-900 text-neutral-500">
-                  Add to Google Wallet (soon)
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       )}
     </Container>
