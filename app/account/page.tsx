@@ -24,43 +24,53 @@ type ApiAccount = {
   };
 };
 
+type Tier = "access" | "member" | "pro";
+
 type Me = {
   user_id: string;
   email: string;
   name?: string | null;
-  tier: "access" | "member" | "pro";
+  tier: Tier;
   status: string;
   renewal_date: string | null;
 };
 
-const TIER_COPY: Record<Me["tier"], { label: string; boost: string; priceShort: string; priceLong: string }> = {
-  access: { label: "ACCESS", boost: "1.00×", priceShort: "£0",     priceLong: "Free" },
-  member: { label: "MEMBER", boost: "1.25×", priceShort: "£2.99",  priceLong: "£2.99 / month" },
-  pro:    { label: "PRO",    boost: "1.50×", priceShort: "£7.99",  priceLong: "£7.99 / month" },
+const TIER_COPY: Record<Tier, { label: string; boost: string; priceShort: string; priceLong: string }> = {
+  access: { label: "ACCESS",  boost: "1.00×", priceShort: "£0",    priceLong: "Free" },
+  member: { label: "MEMBER",  boost: "1.25×", priceShort: "£2.99", priceLong: "£2.99 / month" },
+  pro:    { label: "PRO",     boost: "1.50×", priceShort: "£7.99", priceLong: "£7.99 / month" },
 };
+
+function Badge({ children, tone = "muted" }: { children: string; tone?: "ok" | "warn" | "bad" | "muted" }) {
+  const map = {
+    ok: "bg-green-900/30 text-green-300",
+    warn: "bg-amber-900/30 text-amber-300",
+    bad: "bg-red-900/30 text-red-300",
+    muted: "bg-neutral-800 text-neutral-300",
+  } as const;
+  return <span className={`rounded px-2 py-0.5 text-xs ${map[tone]}`}>{children}</span>;
+}
 
 export default function AccountPage() {
   const supabase = useMemo(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
+    () => createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!),
     []
   );
 
+  const actionsRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [pulseActions, setPulseActions] = useState(false);
 
   const mapToMe = (a: ApiAccount): Me => ({
     user_id: a.user_id,
     email: a.email,
     name: a.full_name ?? null,
-    tier: (a.members?.tier as Me["tier"]) ?? "access",
+    tier: ((a.members?.tier as Tier) ?? "access") as Tier,
     status: a.members?.status ?? "free",
     renewal_date: a.members?.current_period_end ?? null,
   });
@@ -80,11 +90,10 @@ export default function AccountPage() {
       setMe(null);
       return;
     }
-
-    const r = await fetch(
-      `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
-      { cache: "no-store", signal: abortRef.current.signal }
-    );
+    const r = await fetch(`${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`, {
+      cache: "no-store",
+      signal: abortRef.current.signal,
+    });
     if (!r.ok) throw new Error(`/api/account failed: ${r.status}`);
     const acc: ApiAccount = await r.json();
     setMe(mapToMe(acc));
@@ -94,15 +103,14 @@ export default function AccountPage() {
     (async () => {
       try {
         setLoading(true);
-        // Clean Stripe/auth params
+        // Clean noisy query params from redirects
         const url = new URL(window.location.href);
         if (["status", "success", "canceled", "auth_error"].some((k) => url.searchParams.has(k))) {
-          window.history.replaceState({}, "", url.pathname);
+          window.history.replaceState({}, "", url.pathname + url.hash);
         }
         await fetchAccount();
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "Something went wrong";
-        setError(msg);
+        setError(e instanceof Error ? e.message : "Something went wrong");
       } finally {
         setLoading(false);
       }
@@ -112,30 +120,37 @@ export default function AccountPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Spotlight actions if arriving with #upgrade
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.hash === "#upgrade" && actionsRef.current) {
+      actionsRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+      setPulseActions(true);
+      const t = setTimeout(() => setPulseActions(false), 1600);
+      return () => clearTimeout(t);
+    }
+  }, [loading]);
+
   const startMembership = async (plan: "member" | "pro") => {
     try {
       setBusy(true);
       setError("");
-
       const user = await currentUser();
       if (!user) {
-        alert("Please sign in first using the form in the header or below.");
+        alert("Please sign in first using the form on this page.");
         return;
       }
-
       const res = await fetch(`${API_BASE}/api/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: user.id, email: user.email, plan }),
         keepalive: true,
       });
-
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.url) throw new Error(json?.error || "Checkout failed");
       window.location.href = json.url;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Could not start checkout";
-      setError(msg);
+      setError(e instanceof Error ? e.message : "Could not start checkout");
     } finally {
       setBusy(false);
     }
@@ -145,13 +160,11 @@ export default function AccountPage() {
     try {
       setBusy(true);
       setError("");
-
       const user = await currentUser();
       if (!user) {
         alert("Please sign in first.");
         return;
       }
-
       const res = await fetch(`${API_BASE}/api/stripe/portal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -161,8 +174,7 @@ export default function AccountPage() {
       if (!res.ok || !json?.url) throw new Error(json?.error || `Portal failed (${res.status})`);
       window.location.href = json.url;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to open billing portal";
-      setError(msg);
+      setError(e instanceof Error ? e.message : "Failed to open billing portal");
     } finally {
       setBusy(false);
     }
@@ -178,31 +190,52 @@ export default function AccountPage() {
       setLoading(true);
       await fetchAccount();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Refresh failed";
-      setError(msg);
+      setError(e instanceof Error ? e.message : "Refresh failed");
     } finally {
       setLoading(false);
     }
   };
 
-  const TierBadge = ({ tier }: { tier: Me["tier"] }) => (
-    <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs">{tier.toUpperCase()}</span>
-  );
-
-  const StatusBadge = ({ status }: { status: string }) => {
-    const cls =
-      status === "active"
-        ? "bg-green-900/30 text-green-300"
-        : status === "trialing"
-        ? "bg-amber-900/30 text-amber-300"
-        : status === "past_due"
-        ? "bg-red-900/30 text-red-300"
-        : "bg-neutral-800 text-neutral-300";
-    return <span className={`rounded px-2 py-0.5 text-xs ${cls}`}>{status}</span>;
+  const StatusBanner = ({ status }: { status: string }) => {
+    if (status === "past_due") {
+      return (
+        <div className="mb-4 rounded-lg border border-red-700/40 bg-red-900/10 p-3 text-sm text-red-300">
+          Payment issue detected. Please update your billing details to keep benefits active.
+          <button onClick={openBillingPortal} className="ml-3 underline underline-offset-4">
+            Manage billing
+          </button>
+        </div>
+      );
+    }
+    if (status === "trialing") {
+      return (
+        <div className="mb-4 rounded-lg border border-amber-600/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+          You’re on a trial. You can upgrade, switch, or cancel any time from billing.
+          <button onClick={openBillingPortal} className="ml-3 underline underline-offset-4">
+            Open billing portal
+          </button>
+        </div>
+      );
+    }
+    if (status === "canceled") {
+      return (
+        <div className="mb-4 rounded-lg border border-neutral-700 bg-neutral-900 p-3 text-sm text-neutral-200">
+          Your subscription is cancelled. Rejoin below to restore benefits.
+        </div>
+      );
+    }
+    return null;
   };
 
   const offersHref = "/offers";
   const benefitsHref = "/benefits";
+
+  const renewalCopy =
+    me?.renewal_date
+      ? new Date(me.renewal_date).toLocaleDateString()
+      : me?.tier === "access"
+      ? "—"
+      : "—";
 
   return (
     <Container>
@@ -212,7 +245,7 @@ export default function AccountPage() {
         aside={
           <button
             onClick={refresh}
-            className="rounded bg-neutral-800 hover:bg-neutral-700 px-3 py-2"
+            className="rounded bg-neutral-800 hover:bg-neutral-700 px-3 py-2 disabled:opacity-60"
             disabled={loading}
           >
             {loading ? "Refreshing…" : "Refresh"}
@@ -234,56 +267,32 @@ export default function AccountPage() {
             <p className="text-neutral-400 mb-3">Enter your email to get a magic sign-in link.</p>
             <HeaderAuth />
           </div>
-
-          <div className="rounded-xl border border-neutral-800 p-5">
-            <h2 className="font-medium mb-2">Why become a member?</h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {(["access", "member", "pro"] as const).map((t) => (
-                <div key={t} className="rounded-lg border border-neutral-800 p-4">
-                  <div className="flex items-baseline justify-between">
-                    <div className="text-sm text-neutral-400">{t === "access" ? "Free" : "Paid"}</div>
-                    <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs">{TIER_COPY[t].label}</span>
-                  </div>
-                  <div className="mt-2 text-lg font-semibold">{TIER_COPY[t].priceLong}</div>
-                  <div className="text-xs text-neutral-500">Rewards boost: {TIER_COPY[t].boost}</div>
-                  <ul className="mt-3 space-y-1 text-neutral-300">
-                    <li>• All public offers</li>
-                    {t !== "access" ? (
-                      <>
-                        <li>• Prize draw entries</li>
-                        <li>• Tier points boost ({TIER_COPY[t].boost})</li>
-                      </>
-                    ) : (
-                      <li>• No rewards entries</li>
-                    )}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       )}
 
       {/* Logged in */}
       {!loading && me && (
         <div className="space-y-6">
-          {/* Summary card */}
+          <StatusBanner status={me.status} />
+
+          {/* Summary */}
           <div className="rounded-xl border border-neutral-800 p-5 bg-gradient-to-br from-neutral-900 to-neutral-950">
             <div className="text-sm text-neutral-400">Membership</div>
+
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <div className="text-xl font-semibold">TradesCard</div>
-              <TierBadge tier={me.tier} />
-              <StatusBadge status={me.status} />
+              <Badge tone="muted">{TIER_COPY[me.tier].label}</Badge>
+              {me.status === "active" && <Badge tone="ok">active</Badge>}
+              {me.status === "trialing" && <Badge tone="warn">trialing</Badge>}
+              {me.status === "past_due" && <Badge tone="bad">past&nbsp;due</Badge>}
+              {me.status === "canceled" && <Badge tone="muted">canceled</Badge>}
             </div>
 
             <div className="mt-3 grid gap-1 sm:grid-cols-2">
               <div className="truncate"><span className="opacity-60">Name:</span> {me.name || "—"}</div>
               <div className="truncate"><span className="opacity-60">Email:</span> {me.email}</div>
               <div className="truncate"><span className="opacity-60">Member ID:</span> {me.user_id}</div>
-              <div>
-                <span className="opacity-60">Renews:</span>{" "}
-                {me.renewal_date ? new Date(me.renewal_date).toLocaleDateString() : "—"}
-              </div>
+              <div className="truncate"><span className="opacity-60">Renews:</span> {renewalCopy}</div>
             </div>
 
             <div className="mt-4 grid grid-cols-3 gap-2 text-center">
@@ -302,12 +311,15 @@ export default function AccountPage() {
             </div>
           </div>
 
-          {/* Plan actions (clear upgrade/downgrade paths) */}
-          <div className="rounded-xl border border-neutral-800 p-5">
+          {/* Actions */}
+          <div
+            ref={actionsRef}
+            className={`rounded-xl border border-neutral-800 p-5 ${pulseActions ? "animate-pulse" : ""}`}
+          >
             <div className="font-medium mb-3">Plan actions</div>
 
             {/* Access / not active -> join */}
-            {(me.tier === "access" || me.status !== "active") && (
+            {(me.tier === "access" || me.status === "canceled" || me.status === "free") && (
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => startMembership("member")}
@@ -327,12 +339,12 @@ export default function AccountPage() {
             )}
 
             {/* Member -> upgrade / billing */}
-            {me.status === "active" && me.tier === "member" && (
+            {me.status !== "canceled" && me.tier === "member" && (
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => startMembership("pro")}
                   disabled={busy}
-                  className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-60"
+                  className="px-4 py-2 rounded-lg bg-amber-400/90 text-black hover:bg-amber-400 disabled:opacity-60"
                 >
                   {busy ? "Opening…" : "Upgrade to Pro"}
                 </button>
@@ -347,7 +359,7 @@ export default function AccountPage() {
             )}
 
             {/* Pro -> downgrade / billing */}
-            {me.status === "active" && me.tier === "pro" && (
+            {me.status !== "canceled" && me.tier === "pro" && (
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => startMembership("member")}
@@ -363,6 +375,13 @@ export default function AccountPage() {
                 >
                   {busy ? "Opening…" : "Manage billing / cancel"}
                 </button>
+              </div>
+            )}
+
+            {/* Past due -> strong nudge */}
+            {me.status === "past_due" && (
+              <div className="mt-3 text-sm text-red-300">
+                Payment failed. Update your card to avoid losing benefits.
               </div>
             )}
           </div>
