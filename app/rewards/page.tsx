@@ -12,17 +12,16 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://tradescard-api.vercel.app";
 
+type Tier = "access" | "member" | "pro";
+
 type RewardsResp = {
   lifetime_points: number;
   points_this_month: number;
 };
 
-type Tier = "access" | "member" | "pro";
-
 type AccountResp = {
   user_id: string;
   email: string;
-  full_name?: string | null;
   members: null | {
     status: "active" | "trialing" | "past_due" | "canceled" | "free" | string;
     tier: Tier | string;
@@ -41,8 +40,7 @@ function endOfThisMonthLocal() {
   return new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 }
 
-function StatCard(props: { label: string; value: string | number; hint?: string }) {
-  const { label, value, hint } = props;
+function StatCard({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
   return (
     <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
       <div className="text-sm text-neutral-400">{label}</div>
@@ -55,27 +53,32 @@ function StatCard(props: { label: string; value: string | number; hint?: string 
 export default function RewardsPage() {
   const { openJoin } = useJoinModal();
 
-  // Supabase client (browser only)
-  const supabase = useMemo(() => {
-    return createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
-  }, []);
+  // Supabase (client-only)
+  const supabase = useMemo(
+    () =>
+      createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      ),
+    []
+  );
 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string>("");
 
-  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [email, setEmail] = useState<string | null>(null);
   const [tier, setTier] = useState<Tier>("access");
-  const [acctStatus, setAcctStatus] = useState<string>("free");
+  const [status, setStatus] = useState<string>("free");
 
   const [pointsThisMonth, setPointsThisMonth] = useState(0);
   const [lifetimePoints, setLifetimePoints] = useState(0);
 
-  const boost = TIER_BOOST[tier];
-  const entriesThisMonth = Math.max(0, Math.floor(pointsThisMonth * boost));
   const drawCutoff = endOfThisMonthLocal().toLocaleString();
+  const isSignedIn = !!email;
+  const isPaidActive = (status === "active" || status === "trialing") && (tier === "member" || tier === "pro");
+
+  // Only show metrics to active paid members
+  const showExplainer = !isPaidActive;
 
   async function loadAll() {
     setErr("");
@@ -85,18 +88,17 @@ export default function RewardsPage() {
       const user = data?.session?.user ?? null;
 
       if (!user) {
-        // Logged out: show explainer only
-        setUserEmail(null);
+        setEmail(null);
         setTier("access");
-        setAcctStatus("free");
+        setStatus("free");
         setPointsThisMonth(0);
         setLifetimePoints(0);
         return;
       }
 
-      setUserEmail(user.email ?? null);
+      setEmail(user.email ?? null);
 
-      // 1) Account
+      // Account
       const accRes = await fetch(
         `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
         { cache: "no-store" }
@@ -107,9 +109,9 @@ export default function RewardsPage() {
       const rawTier = (acc.members?.tier as Tier) ?? "access";
       const safeTier: Tier = rawTier === "member" || rawTier === "pro" ? rawTier : "access";
       setTier(safeTier);
-      setAcctStatus(acc.members?.status ?? "free");
+      setStatus(acc.members?.status ?? "free");
 
-      // 2) Rewards summary (only meaningful when signed in)
+      // Rewards (only useful if signed in; harmless to fetch regardless)
       const rewRes = await fetch(
         `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(user.id)}`,
         { cache: "no-store" }
@@ -127,7 +129,7 @@ export default function RewardsPage() {
   }
 
   useEffect(() => {
-    // Clean noisy query params after Stripe/auth redirects
+    // Tidy noisy params from redirects
     try {
       const url = new URL(window.location.href);
       if (
@@ -139,32 +141,28 @@ export default function RewardsPage() {
         window.history.replaceState({}, "", url.pathname);
       }
     } catch {
-      /* no-op */
+      /* ignore */
     }
     void loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const isSignedIn = !!userEmail;
-  const isActive = acctStatus === "active" || acctStatus === "trialing";
-  const showUpgrade = !isActive || tier === "access";
 
   return (
     <Container>
       <PageHeader
         title="Rewards"
         subtitle={
-          isSignedIn
-            ? "Earn points every month you’re a paid member. Your tier boosts points — points become entries for weekly and monthly draws."
-            : "Points turn into entries for weekly and monthly draws. Join free to get started; upgrade any time for boosted entries."
+          showExplainer
+            ? "Points become entries for weekly and monthly draws. Join free to get started — upgrade any time for boosted entries."
+            : "Earn points every month you’re a paid member. Your tier boosts points; points become entries for weekly and monthly draws."
         }
         aside={
-          !isSignedIn ? (
+          showExplainer ? (
             <button
-              onClick={() => openJoin("member")}
+              onClick={() => openJoin(isSignedIn ? "member" : "access")}
               className="rounded bg-neutral-800 hover:bg-neutral-700 px-3 py-2"
             >
-              Sign in / Join
+              {isSignedIn ? "Upgrade" : "Sign in / Join"}
             </button>
           ) : (
             <button
@@ -184,8 +182,8 @@ export default function RewardsPage() {
         </div>
       )}
 
-      {/* Logged OUT — simple explainer + CTAs */}
-      {!isSignedIn && (
+      {/* Explainer-only view for logged-out OR Access/free users */}
+      {showExplainer && (
         <>
           <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
             <div className="font-medium mb-1">How entries work</div>
@@ -199,13 +197,15 @@ export default function RewardsPage() {
           </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <button
-              onClick={() => openJoin("access")}
-              className="rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3 text-sm hover:bg-neutral-800 text-left"
-            >
-              <div className="font-semibold">Join free</div>
-              <div className="text-neutral-400">Start with Access. Upgrade any time.</div>
-            </button>
+            {!isSignedIn && (
+              <button
+                onClick={() => openJoin("access")}
+                className="rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3 text-sm hover:bg-neutral-800 text-left"
+              >
+                <div className="font-semibold">Join free</div>
+                <div className="text-neutral-400">Start with Access. Upgrade any time.</div>
+              </button>
+            )}
             <button
               onClick={() => openJoin("member")}
               className="rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3 text-sm hover:bg-neutral-800 text-left"
@@ -223,16 +223,14 @@ export default function RewardsPage() {
           </div>
 
           <div className="mt-6 text-[12px] text-neutral-500">
-            Entries close <span className="font-semibold">{drawCutoff}</span>. Paid and free routes
-            are treated equally.
+            Entries close <span className="font-semibold">{drawCutoff}</span>. Paid and free routes are treated equally.
           </div>
         </>
       )}
 
-      {/* Logged IN — show stats, draw meta, upgrade hint */}
-      {isSignedIn && (
+      {/* Paid, active members see their stats */}
+      {!showExplainer && (
         <>
-          {/* Stats */}
           <div className="grid gap-4 md:grid-cols-3">
             <StatCard
               label="Points this month (base)"
@@ -241,17 +239,18 @@ export default function RewardsPage() {
             />
             <StatCard
               label="Tier boost"
-              value={loading ? "—" : `${boost.toFixed(2)}×`}
+              value={loading ? "—" : `${TIER_BOOST[tier].toFixed(2)}×`}
               hint={`Your tier: ${tier.toUpperCase()}`}
             />
             <StatCard
               label="Entries this month"
-              value={loading ? "—" : entriesThisMonth}
+              value={
+                loading ? "—" : Math.max(0, Math.floor(pointsThisMonth * TIER_BOOST[tier]))
+              }
               hint="Used for monthly prize draw"
             />
           </div>
 
-          {/* Lifetime points */}
           <div className="mt-6 rounded-xl border border-neutral-800 bg-neutral-900 p-4">
             <div className="text-sm text-neutral-400">Lifetime points</div>
             <div className="mt-2 text-2xl font-semibold">{loading ? "—" : lifetimePoints}</div>
@@ -260,7 +259,6 @@ export default function RewardsPage() {
             </div>
           </div>
 
-          {/* Draw meta */}
           <div className="mt-6 rounded-xl border border-neutral-800 bg-neutral-900 p-4">
             <div className="font-medium mb-1">Next draw</div>
             <div className="text-sm text-neutral-300">
@@ -268,24 +266,6 @@ export default function RewardsPage() {
               at random from all eligible entries (paid and free routes treated equally).
             </div>
           </div>
-
-          {/* Upgrade nudges when relevant */}
-          {showUpgrade && (
-            <div className="mt-6 rounded-xl border border-amber-400/30 bg-amber-400/10 p-4">
-              <div className="font-medium mb-2">Get more entries every month</div>
-              <div className="text-sm text-neutral-200">
-                Member earns <span className="font-semibold">1.25×</span> points, Pro earns{" "}
-                <span className="font-semibold">1.5×</span>.{" "}
-                <button
-                  onClick={() => openJoin(tier === "member" ? "pro" : "member")}
-                  className="underline underline-offset-2 hover:opacity-90"
-                >
-                  Upgrade now
-                </button>
-                .
-              </div>
-            </div>
-          )}
         </>
       )}
 
@@ -293,8 +273,8 @@ export default function RewardsPage() {
       <div className="mt-6 rounded-xl border border-dashed border-neutral-800 p-4">
         <div className="font-medium mb-1">Referrals (coming soon)</div>
         <p className="text-sm text-neutral-400">
-          Invite a mate, earn bonus points once they become a paid member (after a short verification
-          window). We’ll show your invite link and referral-earned points here.
+          Invite a mate, earn bonus points once they become a paid member (after a short verification window).
+          We’ll show your invite link and referral-earned points here.
         </p>
       </div>
     </Container>
