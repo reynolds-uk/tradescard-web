@@ -1,7 +1,7 @@
-// app/components/JoinModal.tsx
+// components/JoinModal.tsx
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+type Plan = "access" | "member" | "pro";
 
 type Props = {
   open: boolean;
@@ -11,10 +11,16 @@ type Props = {
   onPro: () => void;
   busy?: boolean;
   error?: string;
+  /** Optional hint from caller to bias the UI (e.g., pre-highlight a plan) */
+  initialPlan?: Plan;
 };
 
 function Badge({ children }: { children: string }) {
-  return <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs">{children}</span>;
+  return (
+    <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs">
+      {children}
+    </span>
+  );
 }
 
 export default function JoinModal({
@@ -25,45 +31,41 @@ export default function JoinModal({
   onPro,
   busy,
   error,
+  initialPlan,
 }: Props) {
-  const [showEmail, setShowEmail] = useState(false);
-  const [email, setEmail] = useState("");
-  const [hint, setHint] = useState<string>("");
-  const inputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    if (open) {
-      setShowEmail(false);
-      setHint("");
-      const saved = typeof window !== "undefined" ? localStorage.getItem("tc:lastEmail") : "";
-      if (saved) setEmail(saved);
-    }
-  }, [open]);
-
-  useEffect(() => {
-    const onOpen = () => {
-      // allow global trigger: window.dispatchEvent(new CustomEvent("tc:openJoinModal"))
-      if (!open) setShowEmail(false);
-    };
-    window.addEventListener("tc:openJoinModal", onOpen as EventListener);
-    return () => window.removeEventListener("tc:openJoinModal", onOpen as EventListener);
-  }, [open]);
-
   if (!open) return null;
 
+  const memberSuggested = initialPlan === "member";
+  const proSuggested = initialPlan === "pro";
+  const accessSuggested = initialPlan === "access";
+
   return (
-    <div aria-modal="true" role="dialog" className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center">
+    <div
+      aria-modal="true"
+      role="dialog"
+      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center"
+    >
       {/* backdrop */}
-      <button aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/60" />
+      <button
+        aria-label="Close"
+        onClick={onClose}
+        className="absolute inset-0 bg-black/60"
+      />
       {/* panel */}
       <div className="relative w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl border border-neutral-800 bg-neutral-900 p-4 sm:p-5">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold">Join TradesCard</h3>
-          <button onClick={onClose} className="rounded px-2 py-1 text-sm bg-neutral-800 hover:bg-neutral-700">Close</button>
+          <button
+            onClick={onClose}
+            className="rounded px-2 py-1 text-sm bg-neutral-800 hover:bg-neutral-700"
+          >
+            Close
+          </button>
         </div>
 
         <p className="mt-2 text-sm text-neutral-400">
-          Pick a plan for protection, early deals and rewards — or join free and upgrade any time.
+          Pick a plan for protection, early deals and rewards — or join free and
+          upgrade any time.
         </p>
 
         {error && (
@@ -74,7 +76,12 @@ export default function JoinModal({
 
         <div className="mt-4 grid gap-3">
           {/* Member */}
-          <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-4">
+          <div className="relative rounded-xl border border-neutral-800 bg-neutral-900/50 p-4">
+            {memberSuggested && (
+              <span className="absolute right-3 -top-2 rounded bg-neutral-800 text-[11px] px-2 py-0.5">
+                Suggested
+              </span>
+            )}
             <div className="flex items-center justify-between">
               <div className="font-medium">Member</div>
               <div className="text-sm text-neutral-400">£2.99/mo</div>
@@ -95,14 +102,19 @@ export default function JoinModal({
           </div>
 
           {/* Pro */}
-          <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-4 ring-1 ring-amber-400/30">
+          <div className="relative rounded-xl border border-amber-400/40 bg-amber-400/10 p-4 ring-1 ring-amber-400/30">
+            {proSuggested && (
+              <span className="absolute right-3 -top-2 rounded bg-neutral-800 text-[11px] px-2 py-0.5">
+                Suggested
+              </span>
+            )}
             <div className="flex items-center justify-between">
               <div className="font-medium">Pro</div>
               <div className="text-sm text-amber-300">£7.99/mo</div>
             </div>
             <ul className="mt-2 text-sm text-neutral-200 space-y-1">
               <li>• Everything in Member</li>
-              <li>• Early-access deals & Pro-only offers</li>
+              <li>• Early-access deals &amp; Pro-only offers</li>
               <li>• Double prize entries</li>
             </ul>
             <button
@@ -114,69 +126,33 @@ export default function JoinModal({
             </button>
           </div>
 
-          {/* Free / Sign in */}
-          <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-4">
+          {/* Free */}
+          <div className="relative rounded-xl border border-neutral-800 bg-neutral-900/50 p-4">
+            {accessSuggested && (
+              <span className="absolute right-3 -top-2 rounded bg-neutral-800 text-[11px] px-2 py-0.5">
+                Suggested
+              </span>
+            )}
             <div className="flex items-center gap-2">
               <div className="font-medium">Join free</div>
               <Badge>FREE</Badge>
             </div>
             <p className="mt-1 text-sm text-neutral-400">
-              Redeem offers when signed in. Upgrade any time for benefits and rewards.
+              Sign in to browse and redeem offers. Upgrade any time for benefits
+              and rewards.
             </p>
-
-            {!showEmail ? (
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  onClick={onJoinFree}
-                  className="rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm hover:bg-neutral-800"
-                >
-                  Sign in / Join free
-                </button>
-                <button
-                  onClick={() => {
-                    setShowEmail(true);
-                    setTimeout(() => inputRef.current?.focus(), 50);
-                  }}
-                  className="rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm hover:bg-neutral-800"
-                >
-                  I already have an account
-                </button>
-              </div>
-            ) : (
-              <form
-                className="mt-3 flex items-center gap-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (typeof window !== "undefined") {
-                    localStorage.setItem("tc:lastEmail", email.trim());
-                    // Reuse header client flow for consistency/fallback:
-                    window.tradescardFocusSignin?.();
-                    setHint("We’ve placed your email in the header. Tap “Send magic link”.");
-                  }
-                }}
-              >
-                <input
-                  ref={inputRef}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@company.com"
-                  className="flex-1 px-3 py-2 rounded-lg bg-neutral-900 border border-neutral-800 text-sm"
-                  inputMode="email"
-                  autoComplete="email"
-                  required
-                />
-                <button className="px-3 py-2 rounded-lg bg-neutral-200 text-neutral-900 text-sm hover:bg-neutral-300">
-                  Continue
-                </button>
-              </form>
-            )}
-            {!!hint && <div className="mt-2 text-xs text-neutral-400">{hint}</div>}
+            <button
+              onClick={onJoinFree}
+              className="mt-3 inline-block rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm hover:bg-neutral-800"
+            >
+              Sign in / Join free
+            </button>
           </div>
         </div>
 
         <div className="mt-4 text-[12px] text-neutral-500">
-          No purchase necessary. Free postal entry route is available on public promo pages. Paid and free
-          routes are treated equally in draws.
+          No purchase necessary. Free postal entry route is available on public promo
+          pages. Paid and free routes are treated equally in draws.
         </div>
       </div>
     </div>
