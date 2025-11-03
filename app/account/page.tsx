@@ -11,20 +11,18 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://tradescard-api.vercel.app";
 
+type Tier = "access" | "member" | "pro";
+
 type ApiAccount = {
   user_id: string;
   email: string;
   full_name?: string | null;
   members: null | {
     status: "active" | "trialing" | "past_due" | "canceled" | "free" | string;
-    tier: "access" | "member" | "pro" | string;
+    tier: Tier | string;
     current_period_end: string | null;
-    stripe_customer_id?: string | null;
-    stripe_subscription_id?: string | null;
   };
 };
-
-type Tier = "access" | "member" | "pro";
 
 type Me = {
   user_id: string;
@@ -33,18 +31,30 @@ type Me = {
   tier: Tier;
   status: string;
   renewal_date: string | null;
+  joined_at?: string | null; // from Supabase auth
 };
 
-const TIER_COPY: Record<Tier, { label: string; boost: string; priceShort: string; priceLong: string }> = {
-  access: { label: "ACCESS",  boost: "1.00×", priceShort: "£0",    priceLong: "Free" },
-  member: { label: "MEMBER",  boost: "1.25×", priceShort: "£2.99", priceLong: "£2.99 / month" },
-  pro:    { label: "PRO",     boost: "1.50×", priceShort: "£7.99", priceLong: "£7.99 / month" },
+type RewardsSummary = {
+  lifetime_points: number;
+  points_this_month: number;
 };
 
-function Badge({ children, tone = "muted" }: { children: string; tone?: "ok" | "warn" | "bad" | "muted" }) {
+const TIER_COPY: Record<Tier, { label: string; boost: string; priceShort: string }> = {
+  access: { label: "ACCESS", boost: "1.00×", priceShort: "£0" },
+  member: { label: "MEMBER", boost: "1.25×", priceShort: "£2.99" },
+  pro: { label: "PRO", boost: "1.50×", priceShort: "£7.99" },
+};
+
+function Badge({
+  children,
+  tone = "muted",
+}: {
+  children: string;
+  tone?: "ok" | "warn" | "bad" | "muted";
+}) {
   const map = {
     ok: "bg-green-900/30 text-green-300",
-    warn: "bg-amber-900/30 text-amber-300",
+    warn: "bg-amber-900/30 text-amber-200",
     bad: "bg-red-900/30 text-red-300",
     muted: "bg-neutral-800 text-neutral-300",
   } as const;
@@ -57,22 +67,24 @@ export default function AccountPage() {
     []
   );
 
-  const actionsRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const actionsRef = useRef<HTMLDivElement | null>(null);
 
   const [me, setMe] = useState<Me | null>(null);
+  const [rewards, setRewards] = useState<RewardsSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [pulseActions, setPulseActions] = useState(false);
 
-  const mapToMe = (a: ApiAccount): Me => ({
+  const mapToMe = (a: ApiAccount, joined_at?: string | null): Me => ({
     user_id: a.user_id,
     email: a.email,
     name: a.full_name ?? null,
     tier: ((a.members?.tier as Tier) ?? "access") as Tier,
     status: a.members?.status ?? "free",
     renewal_date: a.members?.current_period_end ?? null,
+    joined_at: joined_at ?? null,
   });
 
   async function currentUser() {
@@ -80,7 +92,7 @@ export default function AccountPage() {
     return data?.session?.user ?? null;
   }
 
-  async function fetchAccount() {
+  async function fetchEverything() {
     setError("");
     abortRef.current?.abort();
     abortRef.current = new AbortController();
@@ -88,27 +100,47 @@ export default function AccountPage() {
     const user = await currentUser();
     if (!user) {
       setMe(null);
+      setRewards(null);
       return;
     }
-    const r = await fetch(`${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`, {
+
+    // Account
+    const accRes = await fetch(`${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`, {
       cache: "no-store",
       signal: abortRef.current.signal,
     });
-    if (!r.ok) throw new Error(`/api/account failed: ${r.status}`);
-    const acc: ApiAccount = await r.json();
-    setMe(mapToMe(acc));
+    if (!accRes.ok) throw new Error(`/api/account failed: ${accRes.status}`);
+    const acc: ApiAccount = await accRes.json();
+    setMe(mapToMe(acc, (user as any)?.created_at ?? null));
+
+    // Rewards summary
+    const rw = await fetch(
+      `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(user.id)}`,
+      { cache: "no-store", signal: abortRef.current.signal }
+    );
+    if (rw.ok) {
+      const sum: RewardsSummary = await rw.json();
+      setRewards({
+        lifetime_points: Number.isFinite(sum.lifetime_points) ? sum.lifetime_points : 0,
+        points_this_month: Number.isFinite(sum.points_this_month) ? sum.points_this_month : 0,
+      });
+    } else {
+      setRewards(null);
+    }
   }
 
   useEffect(() => {
     (async () => {
       try {
         setLoading(true);
-        // Clean noisy query params from redirects
-        const url = new URL(window.location.href);
-        if (["status", "success", "canceled", "auth_error"].some((k) => url.searchParams.has(k))) {
-          window.history.replaceState({}, "", url.pathname + url.hash);
-        }
-        await fetchAccount();
+        // scrub noisy params
+        try {
+          const url = new URL(window.location.href);
+          if (["status", "success", "canceled", "auth_error"].some((k) => url.searchParams.has(k))) {
+            window.history.replaceState({}, "", url.pathname + url.hash);
+          }
+        } catch {/* no-op */}
+        await fetchEverything();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Something went wrong");
       } finally {
@@ -120,7 +152,7 @@ export default function AccountPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Spotlight actions if arriving with #upgrade
+  // Spotlight actions if arriving from an upgrade path
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (window.location.hash === "#upgrade" && actionsRef.current) {
@@ -188,7 +220,7 @@ export default function AccountPage() {
   const refresh = async () => {
     try {
       setLoading(true);
-      await fetchAccount();
+      await fetchEverything();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Refresh failed");
     } finally {
@@ -196,52 +228,29 @@ export default function AccountPage() {
     }
   };
 
-  const StatusBanner = ({ status }: { status: string }) => {
-    if (status === "past_due") {
-      return (
-        <div className="mb-4 rounded-lg border border-red-700/40 bg-red-900/10 p-3 text-sm text-red-300">
-          Payment issue detected. Please update your billing details to keep benefits active.
-          <button onClick={openBillingPortal} className="ml-3 underline underline-offset-4">
-            Manage billing
-          </button>
-        </div>
-      );
-    }
-    if (status === "trialing") {
-      return (
-        <div className="mb-4 rounded-lg border border-amber-600/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-          You’re on a trial. You can upgrade, switch, or cancel any time from billing.
-          <button onClick={openBillingPortal} className="ml-3 underline underline-offset-4">
-            Open billing portal
-          </button>
-        </div>
-      );
-    }
-    if (status === "canceled") {
-      return (
-        <div className="mb-4 rounded-lg border border-neutral-700 bg-neutral-900 p-3 text-sm text-neutral-200">
-          Your subscription is cancelled. Rejoin below to restore benefits.
-        </div>
-      );
-    }
-    return null;
+  // ---------- UI helpers
+  const statusBadge = (status: string) => {
+    if (status === "active") return <Badge tone="ok">active</Badge>;
+    if (status === "trialing") return <Badge tone="warn">trialing</Badge>;
+    if (status === "past_due") return <Badge tone="bad">past due</Badge>;
+    if (status === "canceled") return <Badge tone="muted">canceled</Badge>;
+    return <Badge tone="muted">{status}</Badge>;
   };
 
-  const offersHref = "/offers";
-  const benefitsHref = "/benefits";
+  const prettyDate = (iso?: string | null) =>
+    iso ? new Date(iso).toLocaleDateString() : "—";
 
-  const renewalCopy =
-    me?.renewal_date
-      ? new Date(me.renewal_date).toLocaleDateString()
-      : me?.tier === "access"
-      ? "—"
-      : "—";
+  const canJoin = !me || me.tier === "access" || me.status === "canceled" || me.status === "free";
+  const canUpgrade = me?.status !== "canceled" && me?.tier === "member";
+  const canDowngrade = me?.status !== "canceled" && me?.tier === "pro";
+  const isActive = me?.status === "active" || me?.status === "trialing";
 
+  // ---------- Render
   return (
     <Container>
       <PageHeader
         title="My Account"
-        subtitle="Manage your membership, billing and perks."
+        subtitle="Manage your membership, card, billing and rewards eligibility."
         aside={
           <button
             onClick={refresh}
@@ -273,26 +282,60 @@ export default function AccountPage() {
       {/* Logged in */}
       {!loading && me && (
         <div className="space-y-6">
-          <StatusBanner status={me.status} />
+          {/* Status cues */}
+          {me.status === "past_due" && (
+            <div className="rounded-lg border border-red-700/40 bg-red-900/10 p-3 text-sm text-red-300">
+              Payment issue detected. Update your billing details to keep benefits active.
+              <button onClick={openBillingPortal} className="ml-3 underline underline-offset-4">
+                Manage billing
+              </button>
+            </div>
+          )}
+          {me.status === "trialing" && (
+            <div className="rounded-lg border border-amber-600/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+              You’re on a trial. Upgrade, switch, or cancel any time from billing.
+              <button onClick={openBillingPortal} className="ml-3 underline underline-offset-4">
+                Open billing portal
+              </button>
+            </div>
+          )}
 
-          {/* Summary */}
-          <div className="rounded-xl border border-neutral-800 p-5 bg-gradient-to-br from-neutral-900 to-neutral-950">
-            <div className="text-sm text-neutral-400">Membership</div>
-
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <div className="text-xl font-semibold">TradesCard</div>
-              <Badge tone="muted">{TIER_COPY[me.tier].label}</Badge>
-              {me.status === "active" && <Badge tone="ok">active</Badge>}
-              {me.status === "trialing" && <Badge tone="warn">trialing</Badge>}
-              {me.status === "past_due" && <Badge tone="bad">past&nbsp;due</Badge>}
-              {me.status === "canceled" && <Badge tone="muted">canceled</Badge>}
+          {/* My TradesCard (virtual card) */}
+          <section className="rounded-2xl border border-neutral-800 p-5 bg-gradient-to-br from-neutral-900 to-neutral-950">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm text-neutral-400">My TradesCard</div>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <div className="text-2xl font-semibold">TradesCard</div>
+                  <Badge tone="muted">{TIER_COPY[me.tier].label}</Badge>
+                  {statusBadge(me.status)}
+                </div>
+              </div>
+              {/* Placeholder for QR / Wallet (future) */}
+              <div className="rounded-lg border border-dashed border-neutral-700 px-3 py-2 text-xs text-neutral-400">
+                QR / Wallet coming soon
+              </div>
             </div>
 
-            <div className="mt-3 grid gap-1 sm:grid-cols-2">
-              <div className="truncate"><span className="opacity-60">Name:</span> {me.name || "—"}</div>
-              <div className="truncate"><span className="opacity-60">Email:</span> {me.email}</div>
-              <div className="truncate"><span className="opacity-60">Member ID:</span> {me.user_id}</div>
-              <div className="truncate"><span className="opacity-60">Renews:</span> {renewalCopy}</div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              <div className="truncate">
+                <span className="opacity-60">Name:</span> {me.name || "—"}
+              </div>
+              <div className="truncate">
+                <span className="opacity-60">Email:</span> {me.email}
+              </div>
+              <div className="truncate">
+                <span className="opacity-60">Member ID:</span> {me.user_id}
+                <button
+                  className="ml-2 rounded bg-neutral-800 px-2 py-0.5 text-xs hover:bg-neutral-700"
+                  onClick={() => navigator.clipboard.writeText(me.user_id)}
+                >
+                  Copy ID
+                </button>
+              </div>
+              <div className="truncate">
+                <span className="opacity-60">Joined:</span> {prettyDate(me.joined_at)}
+              </div>
             </div>
 
             <div className="mt-4 grid grid-cols-3 gap-2 text-center">
@@ -301,25 +344,56 @@ export default function AccountPage() {
                 <div className="text-xs text-neutral-400 mt-1">Tier boost</div>
               </div>
               <div className="rounded-lg border border-neutral-800 p-3">
-                <div className="text-2xl font-semibold">{TIER_COPY[me.tier].label}</div>
-                <div className="text-xs text-neutral-400 mt-1">Plan</div>
-              </div>
-              <div className="rounded-lg border border-neutral-800 p-3">
                 <div className="text-2xl font-semibold">{TIER_COPY[me.tier].priceShort}</div>
                 <div className="text-xs text-neutral-400 mt-1">per month</div>
               </div>
+              <div className="rounded-lg border border-neutral-800 p-3">
+                <div className="text-2xl font-semibold">{prettyDate(me.renewal_date)}</div>
+                <div className="text-xs text-neutral-400 mt-1">Renews</div>
+              </div>
             </div>
-          </div>
+          </section>
 
-          {/* Actions */}
-          <div
+          {/* Rewards eligibility / impact */}
+          <section className="rounded-xl border border-neutral-800 p-5">
+            <div className="flex items-center justify-between">
+              <div className="font-medium">Rewards eligibility</div>
+              <div className="text-xs text-neutral-400">
+                {isActive ? "Eligible while membership is active" : "Not eligible"}
+              </div>
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              <div className="rounded-lg border border-neutral-800 p-3">
+                <div className="text-sm text-neutral-400">Points this month</div>
+                <div className="mt-1 text-2xl font-semibold">
+                  {rewards ? rewards.points_this_month : "—"}
+                </div>
+              </div>
+              <div className="rounded-lg border border-neutral-800 p-3">
+                <div className="text-sm text-neutral-400">Lifetime points</div>
+                <div className="mt-1 text-2xl font-semibold">
+                  {rewards ? rewards.lifetime_points : "—"}
+                </div>
+              </div>
+              <div className="rounded-lg border border-neutral-800 p-3">
+                <div className="text-sm text-neutral-400">Status</div>
+                <div className="mt-1">{statusBadge(me.status)}</div>
+              </div>
+            </div>
+            <p className="mt-3 text-sm text-neutral-400">
+              Cancelling or downgrading stops new entries immediately. Lifetime points remain on
+              your profile but do not qualify you for draws while inactive.
+            </p>
+          </section>
+
+          {/* Actions: clear, transparent */}
+          <section
             ref={actionsRef}
             className={`rounded-xl border border-neutral-800 p-5 ${pulseActions ? "animate-pulse" : ""}`}
           >
             <div className="font-medium mb-3">Plan actions</div>
 
-            {/* Access / not active -> join */}
-            {(me.tier === "access" || me.status === "canceled" || me.status === "free") && (
+            {canJoin && (
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => startMembership("member")}
@@ -338,8 +412,7 @@ export default function AccountPage() {
               </div>
             )}
 
-            {/* Member -> upgrade / billing */}
-            {me.status !== "canceled" && me.tier === "member" && (
+            {canUpgrade && (
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => startMembership("pro")}
@@ -353,13 +426,12 @@ export default function AccountPage() {
                   disabled={busy}
                   className="px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
                 >
-                  {busy ? "Opening…" : "Manage billing / cancel"}
+                  {busy ? "Opening…" : "Manage billing / Cancel"}
                 </button>
               </div>
             )}
 
-            {/* Pro -> downgrade / billing */}
-            {me.status !== "canceled" && me.tier === "pro" && (
+            {canDowngrade && (
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => startMembership("member")}
@@ -373,31 +445,35 @@ export default function AccountPage() {
                   disabled={busy}
                   className="px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
                 >
-                  {busy ? "Opening…" : "Manage billing / cancel"}
+                  {busy ? "Opening…" : "Manage billing / Cancel"}
                 </button>
               </div>
             )}
 
-            {/* Past due -> strong nudge */}
-            {me.status === "past_due" && (
-              <div className="mt-3 text-sm text-red-300">
-                Payment failed. Update your card to avoid losing benefits.
+            {/* Always show a way to cancel for transparency */}
+            {!canJoin && !canUpgrade && !canDowngrade && (
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={openBillingPortal}
+                  disabled={busy}
+                  className="px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
+                >
+                  {busy ? "Opening…" : "Manage billing / Cancel"}
+                </button>
               </div>
             )}
-          </div>
 
-          {/* Shortcuts */}
-          <div className="flex flex-wrap gap-2">
-            <a href="/rewards" className="px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800">
-              View rewards
-            </a>
-            <a href={offersHref} className="px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800">
-              Browse offers
-            </a>
-            <a href={benefitsHref} className="px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800">
-              View benefits
-            </a>
-            <button onClick={signOut} className="ml-auto px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800">
+            <p className="mt-3 text-xs text-neutral-500">
+              You can cancel any time. Cancelling stops reward entries immediately.
+            </p>
+          </section>
+
+          {/* Safety + exit */}
+          <div className="flex justify-end">
+            <button
+              onClick={signOut}
+              className="px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800"
+            >
               Sign out
             </button>
           </div>
