@@ -2,10 +2,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { createClient } from '@supabase/supabase-js';
 import Container from '@/components/Container';
 import PageHeader from '@/components/PageHeader';
-import HeaderAuth from '../header-client';
+
+// Defer client-only header auth to the browser (prevents SSR hiccups)
+const HeaderAuth = dynamic(() => import('../header-client'), { ssr: false });
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -17,18 +20,18 @@ type RewardsResp = {
   points_this_month: number;
 };
 
+type Tier = 'access' | 'member' | 'pro';
+
 type AccountResp = {
   user_id: string;
   email: string;
   full_name?: string | null;
   members: null | {
     status: 'active' | 'trialing' | 'past_due' | 'canceled' | 'free' | string;
-    tier: 'access' | 'member' | 'pro' | string;
+    tier: Tier | string;
     current_period_end: string | null;
   };
 };
-
-type Tier = 'access' | 'member' | 'pro';
 
 const TIER_BOOST: Record<Tier, number> = {
   access: 1.0,
@@ -36,7 +39,7 @@ const TIER_BOOST: Record<Tier, number> = {
   pro: 1.5,
 };
 
-function clsBadge(kind: 'ok' | 'warn' | 'muted') {
+function badge(kind: 'ok' | 'warn' | 'muted') {
   if (kind === 'ok') return 'bg-green-900/30 text-green-300';
   if (kind === 'warn') return 'bg-amber-900/30 text-amber-300';
   return 'bg-neutral-800 text-neutral-300';
@@ -47,25 +50,32 @@ function endOfThisMonthLocal() {
   return new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 }
 
-function StatCard(props: { label: string; value: React.ReactNode; hint?: string }) {
+function StatCard({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: React.ReactNode;
+  hint?: string;
+}) {
   return (
     <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
-      <div className="text-sm text-neutral-400">{props.label}</div>
-      <div className="mt-2 text-3xl font-semibold">{props.value}</div>
-      {props.hint && <div className="mt-1 text-xs text-neutral-500">{props.hint}</div>}
+      <div className="text-sm text-neutral-400">{label}</div>
+      <div className="mt-2 text-3xl font-semibold">{value}</div>
+      {hint ? <div className="mt-1 text-xs text-neutral-500">{hint}</div> : null}
     </div>
   );
 }
 
 export default function RewardsPage() {
-  const supabase = useMemo(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
-    []
-  );
+  // Create Supabase client only on the client side
+  const supabase = useMemo(() => {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!url || !key) return null;
+    return createClient(url, key);
+  }, []);
 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string>('');
@@ -77,19 +87,16 @@ export default function RewardsPage() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
   const boost = TIER_BOOST[tier];
-  const entriesThisMonth = Math.floor(pointsThisMonth * boost);
+  const entriesThisMonth = Math.max(0, Math.floor(pointsThisMonth * boost));
   const drawCutoff = endOfThisMonthLocal().toLocaleString();
-
-  async function currentUser() {
-    const { data } = await supabase.auth.getSession();
-    return data?.session?.user ?? null;
-  }
 
   async function loadAll() {
     setErr('');
     setLoading(true);
     try {
-      const user = await currentUser();
+      if (!supabase) throw new Error('Supabase not initialised on client');
+      const { data } = await supabase.auth.getSession();
+      const user = data?.session?.user ?? null;
 
       if (!user) {
         setUserEmail(null);
@@ -102,7 +109,7 @@ export default function RewardsPage() {
 
       setUserEmail(user.email ?? null);
 
-      // 1) account (tier/status)
+      // 1) Account
       const accRes = await fetch(
         `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
         { cache: 'no-store' }
@@ -110,12 +117,12 @@ export default function RewardsPage() {
       if (!accRes.ok) throw new Error(`Account failed (${accRes.status})`);
       const acc: AccountResp = await accRes.json();
 
-      const t = (acc.members?.tier as Tier) ?? 'access';
-      const s = acc.members?.status ?? 'free';
-      setTier(['access', 'member', 'pro'].includes(t) ? t : 'access');
-      setAcctStatus(s);
+      const rawTier = (acc.members?.tier as Tier) ?? 'access';
+      const safeTier: Tier = rawTier === 'member' || rawTier === 'pro' ? rawTier : 'access';
+      setTier(safeTier);
+      setAcctStatus(acc.members?.status ?? 'free');
 
-      // 2) rewards summary
+      // 2) Rewards summary
       const rewRes = await fetch(
         `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(user.id)}`,
         { cache: 'no-store' }
@@ -123,9 +130,9 @@ export default function RewardsPage() {
       if (!rewRes.ok) throw new Error(`Rewards failed (${rewRes.status})`);
       const rew: RewardsResp = await rewRes.json();
 
-      setPointsThisMonth(rew.points_this_month ?? 0);
-      setLifetimePoints(rew.lifetime_points ?? 0);
-    } catch (e: unknown) {
+      setPointsThisMonth(Number.isFinite(rew.points_this_month) ? rew.points_this_month : 0);
+      setLifetimePoints(Number.isFinite(rew.lifetime_points) ? rew.lifetime_points : 0);
+    } catch (e) {
       setErr(e instanceof Error ? e.message : 'Something went wrong');
     } finally {
       setLoading(false);
@@ -133,17 +140,22 @@ export default function RewardsPage() {
   }
 
   useEffect(() => {
-    // clean URL after Stripe/Auth
-    const url = new URL(window.location.href);
-    if (
-      url.searchParams.has('status') ||
-      url.searchParams.has('success') ||
-      url.searchParams.has('canceled') ||
-      url.searchParams.has('auth_error')
-    ) {
-      window.history.replaceState({}, '', url.pathname);
+    // Clean noisy query params after Stripe/auth redirects
+    try {
+      const url = new URL(window.location.href);
+      if (
+        url.searchParams.has('status') ||
+        url.searchParams.has('success') ||
+        url.searchParams.has('canceled') ||
+        url.searchParams.has('auth_error')
+      ) {
+        window.history.replaceState({}, '', url.pathname);
+      }
+    } catch {
+      // ignore
     }
-    loadAll();
+    // Load data
+    void loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -157,22 +169,22 @@ export default function RewardsPage() {
           title="Rewards"
           subtitle="Earn points every month you’re a member. Higher tiers boost your points. Points become entries for our weekly and monthly prize draws."
         />
-        {!loading && (
+        {!loading ? (
           <div className="text-sm text-neutral-500">
             <span className="rounded bg-neutral-800 px-2 py-0.5 mr-2">{tier.toUpperCase()}</span>
             <span
               className={`rounded px-2 py-0.5 ${
                 acctStatus === 'active'
-                  ? clsBadge('ok')
+                  ? badge('ok')
                   : acctStatus === 'trialing'
-                  ? clsBadge('warn')
-                  : clsBadge('muted')
+                  ? badge('warn')
+                  : badge('muted')
               }`}
             >
               {acctStatus}
             </span>
           </div>
-        )}
+        ) : null}
       </div>
 
       {err && (
@@ -193,7 +205,7 @@ export default function RewardsPage() {
 
       <div className="mb-4">
         <button
-          onClick={loadAll}
+          onClick={() => void loadAll()}
           disabled={loading}
           className="px-3 py-1 rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-60"
         >
@@ -236,10 +248,10 @@ export default function RewardsPage() {
           Entries close <span className="font-semibold">{drawCutoff}</span>. Winners are selected
           at random from all eligible entries (paid and free routes treated equally).
         </div>
-        {(showUpgrade || tier === 'access') && (
+        {showUpgrade && (
           <div className="mt-3 text-sm text-neutral-400">
-            <span className="font-medium">Free entry route:</span> No purchase necessary. Instructions
-            are shown on public promotional pages. Postal entries receive the same chance to win.
+            <span className="font-medium">Free entry route:</span> No purchase necessary. Postal
+            entries available on public promo pages.
           </div>
         )}
       </div>
@@ -248,7 +260,7 @@ export default function RewardsPage() {
       {showUpgrade && (
         <div className="mt-6 rounded-xl border border-amber-400/30 bg-amber-400/10 p-4">
           <div className="font-medium mb-2">Get more entries every month</div>
-          <div className="text-sm text-neutral-800 md:text-neutral-900">
+          <div className="text-sm text-neutral-900">
             Member earns <span className="font-semibold">1.25×</span> points, Pro earns{' '}
             <span className="font-semibold">1.5×</span>. Upgrade from your{' '}
             <a href="/account" className="underline">
