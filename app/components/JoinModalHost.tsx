@@ -6,7 +6,8 @@ import { useJoinModal } from "./JoinModalContext";
 import { useJoinActions } from "./useJoinActions";
 
 export default function JoinModalHost() {
-  const { open, plan, closeJoin } = useJoinModal(); // <- use closeJoin
+  // ⬇️ drop `plan` to satisfy no-unused-vars
+  const { open, closeJoin } = useJoinModal();
   const { busy, error, joinFree, startMembership } = useJoinActions();
 
   if (!open) return null;
@@ -20,7 +21,6 @@ export default function JoinModalHost() {
       onPro={() => startMembership("pro")}
       busy={busy}
       error={error}
-      /* no initialPlan prop on JoinModal */
     />
   );
 }
