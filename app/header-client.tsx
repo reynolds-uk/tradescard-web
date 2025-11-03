@@ -6,7 +6,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { usePathname } from "next/navigation";
 import { useJoinModal } from "./components/JoinModalContext";
-import { useJoinActions } from "./components/useJoinActions";
 
 type Tier = "access" | "member" | "pro";
 
@@ -53,7 +52,6 @@ export default function HeaderAuth() {
 
   // ---- Join modal hooks ----
   const { openJoin } = useJoinModal();
-  const { startMembership } = useJoinActions(); // we only need this to ensure hook initialises auth
 
   // ---- Auth / account state ----
   const [loading, setLoading] = useState(true);
