@@ -1,12 +1,16 @@
-// app/components/JoinModalHost.tsx
-'use client';
-import JoinModal from '@/components/JoinModal';
-import { useJoinModal } from '@/components/JoinModalContext';
-import { useJoinActions } from '@/components/useJoinActions';
+"use client";
+
+import JoinModal from "@/components/JoinModal";
+import { useJoinActions } from "@/components/useJoinActions";
+import { useJoinModal } from "@/components/JoinModalContext";
+
+type Plan = "member" | "pro" | "access";
 
 export default function JoinModalHost() {
-  const { open, plan, closeJoin } = useJoinModal();
+  const { open, plan, close } = useJoinModal(); // <- no unused vars
   const { busy, error, joinFree, startMembership } = useJoinActions();
+
+  if (!open) return null;
 
   return (
     <JoinModal
@@ -17,7 +21,7 @@ export default function JoinModalHost() {
       onPro={(billing) => startMembership("pro", billing)}
       busy={busy}
       error={error}
-      initialPlan={plan}
+      initialPlan={plan as Plan}
     />
   );
 }
