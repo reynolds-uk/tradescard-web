@@ -74,24 +74,24 @@ export default function MemberBenefits() {
         setErr("");
 
         // who am I?
-        const { data } = await supabase.auth.getSession();
-        const user = data?.session?.user ?? null;
+        const { data: sessionData } = await supabase.auth.getSession();
+        const user = sessionData?.session?.user ?? null;
 
         if (!user) {
           setMe(null);
         } else {
-          const a = await fetch(
+          const accRes = await fetch(
             `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
             { cache: "no-store" }
           );
-          if (a.ok) {
-            const j = await a.json();
-            const tier = (j?.members?.tier as Me["tier"]) ?? "access";
-            const status = j?.members?.status ?? "free";
+          if (accRes.ok) {
+            const accJson = await accRes.json();
+            const tier = (accJson?.members?.tier as Me["tier"]) ?? "access";
+            const status = accJson?.members?.status ?? "free";
             if (!aborted) {
               setMe({
-                user_id: j?.user_id ?? user.id,
-                email: j?.email ?? user.email ?? "",
+                user_id: accJson?.user_id ?? user.id,
+                email: accJson?.email ?? user.email ?? "",
                 tier,
                 status,
               });
@@ -102,12 +102,12 @@ export default function MemberBenefits() {
         }
 
         // catalogue
-        const res = await fetch(`${API_BASE}/api/benefits`, { cache: "no-store" });
-        if (!res.ok) throw new Error(`benefits ${res.status}`);
-        const data: Benefit[] = await res.json();
+        const benRes = await fetch(`${API_BASE}/api/benefits`, { cache: "no-store" });
+        if (!benRes.ok) throw new Error(`benefits ${benRes.status}`);
+        const benefitsData = (await benRes.json()) as Benefit[];
 
         // sort by priority desc then title
-        const sorted = [...data].sort((a, b) => {
+        const sorted = [...benefitsData].sort((a, b) => {
           const byPrio = (b.priority ?? 0) - (a.priority ?? 0);
           if (byPrio !== 0) return byPrio;
           return (a.title || "").localeCompare(b.title || "");
@@ -135,8 +135,11 @@ export default function MemberBenefits() {
   const handleClick = (b: Benefit) => {
     const canUse = eligibleFor(b);
     if (canUse && b.link) {
-      if (/^https?:\/\//i.test(b.link)) window.open(b.link, "_blank", "noopener,noreferrer");
-      else window.location.href = b.link!;
+      if (/^https?:\/\//i.test(b.link)) {
+        window.open(b.link, "_blank", "noopener,noreferrer");
+      } else {
+        window.location.href = b.link!;
+      }
       return;
     }
     // member but locked (i.e. needs Pro) → send to account to upgrade
@@ -191,11 +194,14 @@ export default function MemberBenefits() {
         </div>
       ) : (
         <>
-          {/* upgrade hint for Member users if Pro items exist */}
           {me?.tier === "member" && lockedCount > 0 && (
             <div className="mb-4 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-amber-200">
               Unlock <b>{lockedCount}</b> extra benefit{lockedCount > 1 ? "s" : ""} with{" "}
-              <b>Pro</b>. Manage or upgrade from your <a className="underline" href="/account">Account</a>.
+              <b>Pro</b>. Manage or upgrade from your{" "}
+              <a className="underline" href="/account">
+                Account
+              </a>
+              .
             </div>
           )}
 
@@ -206,12 +212,11 @@ export default function MemberBenefits() {
                 <button
                   key={b.id}
                   onClick={() => handleClick(b)}
-                  className={`group text-left rounded-2xl border p-5 transition
-                    ${
-                      canUse
-                        ? "border-neutral-800 bg-neutral-900 hover:bg-neutral-800"
-                        : "border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/60"
-                    }`}
+                  className={`group relative text-left rounded-2xl border p-5 transition ${
+                    canUse
+                      ? "border-neutral-800 bg-neutral-900 hover:bg-neutral-800"
+                      : "border-neutral-800 bg-neutral-950/60 hover:bg-neutral-900/60"
+                  }`}
                 >
                   <div className="mb-2 flex items-center justify-between">
                     <Pill>{b.tier.toUpperCase()}</Pill>
