@@ -22,7 +22,7 @@ type AccountShape = {
 
 declare global {
   interface Window {
-    /** Back-compat: previously scrolled/focused email box; now opens Join modal */
+    /** Back-compat: previously focused the header email box; now opens Join modal */
     tradescardFocusSignin?: () => void;
   }
 }
@@ -34,7 +34,7 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://tradescard-api.vercel.app";
 
-function cx(...xs: Array<string | false | undefined>) {
+function cx(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
 }
 
@@ -50,7 +50,7 @@ export default function HeaderAuth() {
     return createClient(url, key);
   }, []);
 
-  // ---- Join modal hooks ----
+  // ---- Join modal ----
   const { openJoin } = useJoinModal();
 
   // ---- Auth / account state ----
@@ -64,10 +64,10 @@ export default function HeaderAuth() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  // track in-flight account request to prevent races on fast auth changes
+  // track in-flight account request to prevent races
   const accountAbortRef = useRef<AbortController | null>(null);
 
-  // Back-compat for older code paths that call window.tradescardFocusSignin()
+  // Back-compat: legacy callers can still trigger join
   useEffect(() => {
     if (!isBrowser) return;
     window.tradescardFocusSignin = () => openJoin("access");
@@ -76,15 +76,22 @@ export default function HeaderAuth() {
     };
   }, [openJoin]);
 
-  // Close menu on outside click
+  // Close menu on outside click & Escape
   useEffect(() => {
     if (!menuOpen) return;
-    const onDoc = (e: MouseEvent) => {
+    const onClick = (e: MouseEvent) => {
       if (!menuRef.current) return;
       if (!menuRef.current.contains(e.target as Node)) setMenuOpen(false);
     };
-    document.addEventListener("click", onDoc);
-    return () => document.removeEventListener("click", onDoc);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [menuOpen]);
 
   // Fetch current account (tier/status) with abort protection
@@ -105,9 +112,10 @@ export default function HeaderAuth() {
       setStatus(s);
       setSessionEmail(a.email);
     } catch (e: unknown) {
-      // Ignore aborts caused by rapid auth changes
       const isAbort =
-        (typeof DOMException !== "undefined" && e instanceof DOMException && e.name === "AbortError") ||
+        (typeof DOMException !== "undefined" &&
+          e instanceof DOMException &&
+          e.name === "AbortError") ||
         ((e as { name?: string } | null)?.name === "AbortError");
       if (isAbort) return;
 
@@ -198,7 +206,7 @@ export default function HeaderAuth() {
 
   // Not signed in → always use modal (no inline email field)
   if (!userId) {
-    // If the user is on /join we bias to Member preselected; elsewhere default to Access
+    // If on /join we bias to Member preselected; elsewhere default to Access
     const initialPlan = pathname === "/join" ? ("member" as const) : ("access" as const);
 
     return (
@@ -206,6 +214,7 @@ export default function HeaderAuth() {
         <button
           onClick={() => openJoin(initialPlan)}
           className="px-3 py-1 rounded bg-neutral-200 text-neutral-900 text-sm hover:bg-neutral-300"
+          aria-label="Sign in or join"
         >
           Sign in / Join
         </button>

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { usePathname } from "next/navigation";
+import Container from "./Container";
 import HeaderAuth from "../header-client";
 
 const API_BASE =
@@ -26,6 +27,7 @@ function cx(...xs: Array<string | false | null | undefined>) {
 export default function Nav() {
   const pathname = usePathname();
 
+  // Client-only supabase instance
   const supabase = useMemo(
     () =>
       createClient(
@@ -40,15 +42,13 @@ export default function Nav() {
   useEffect(() => {
     let aborted = false;
 
-    async function resolveEligibility() {
+    (async () => {
       try {
         const { data } = await supabase.auth.getSession();
         const user = data?.session?.user ?? null;
 
         if (!user) {
-          if (!aborted) {
-            setElig({ eligible: false });
-          }
+          if (!aborted) setElig({ eligible: false });
           return;
         }
 
@@ -58,9 +58,7 @@ export default function Nav() {
         );
 
         if (!r.ok) {
-          if (!aborted) {
-            setElig({ eligible: false, email: user.email ?? null });
-          }
+          if (!aborted) setElig({ eligible: false, email: user.email ?? null });
           return;
         }
 
@@ -78,13 +76,10 @@ export default function Nav() {
           });
         }
       } catch {
-        if (!aborted) {
-          setElig({ eligible: false });
-        }
+        if (!aborted) setElig({ eligible: false });
       }
-    }
+    })();
 
-    resolveEligibility();
     return () => {
       aborted = true;
     };
@@ -93,55 +88,52 @@ export default function Nav() {
   const offersHref = elig.eligible ? "/member/offers" : "/offers";
   const benefitsHref = elig.eligible ? "/member/benefits" : "/benefits";
 
-  const linkBase =
-    "px-3 py-1 rounded transition bg-neutral-800 text-neutral-100 hover:bg-neutral-700";
-  const linkActive = "bg-neutral-200 text-neutral-900";
+  const tab = "px-3 py-1 rounded text-sm whitespace-nowrap";
+  const tabIdle = "text-neutral-300 hover:bg-neutral-900";
+  const tabActive = "bg-neutral-800 text-neutral-100";
   const isActive = (href: string) =>
     pathname === href ||
-    // treat parent route as active when on the member version
     (href === "/offers" && pathname === "/member/offers") ||
     (href === "/benefits" && pathname === "/member/benefits");
 
   return (
-    <header className="sticky top-0 z-30 border-b border-neutral-800 bg-neutral-950/80 backdrop-blur">
-      <div className="mx-auto max-w-5xl px-4 h-14 flex items-center justify-between">
-        <div className="flex items-center gap-6">
-          <Link className="text-lg font-semibold" href="/">
-            TradesCard
+    <header className="sticky top-0 z-50 border-b border-neutral-900/60 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70">
+      <Container className="flex h-14 items-center gap-3">
+        <Link href="/" className="font-semibold text-neutral-100 mr-1">
+          TradesCard
+        </Link>
+
+        {/* Tabs (scrollable on mobile) */}
+        <nav className="flex gap-1 overflow-x-auto no-scrollbar">
+          <Link
+            href={offersHref}
+            className={cx(tab, isActive("/offers") ? tabActive : tabIdle)}
+            aria-current={isActive("/offers") ? "page" : undefined}
+          >
+            Offers
           </Link>
+          <Link
+            href={benefitsHref}
+            className={cx(tab, isActive("/benefits") ? tabActive : tabIdle)}
+            aria-current={isActive("/benefits") ? "page" : undefined}
+          >
+            Benefits
+          </Link>
+          <Link
+            href="/rewards"
+            className={cx(tab, isActive("/rewards") ? tabActive : tabIdle)}
+            aria-current={isActive("/rewards") ? "page" : undefined}
+          >
+            Rewards
+          </Link>
+          {/* No “Account” tab — handled by HeaderAuth chip/menu */}
+        </nav>
 
-          <nav className="hidden sm:flex items-center gap-2 text-sm">
-            <Link
-              href={offersHref}
-              className={cx(linkBase, isActive("/offers") && linkActive)}
-            >
-              Offers
-            </Link>
-            <Link
-              href={benefitsHref}
-              className={cx(linkBase, isActive("/benefits") && linkActive)}
-            >
-              Benefits
-            </Link>
-            <Link
-              href="/rewards"
-              className={cx(linkBase, isActive("/rewards") && linkActive)}
-            >
-              Rewards
-            </Link>
-            <Link
-              href="/account"
-              className={cx(linkBase, isActive("/account") && linkActive)}
-            >
-              Account
-            </Link>
-          </nav>
-        </div>
+        <div className="flex-1" />
 
-        <div className="flex items-center gap-2">
-          <HeaderAuth />
-        </div>
-      </div>
+        {/* Right-side auth chip / Sign in button */}
+        <HeaderAuth />
+      </Container>
     </header>
   );
 }
