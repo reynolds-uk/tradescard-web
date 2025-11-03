@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
-import Link from "next/link";
 
 declare global {
   interface Window {
@@ -18,7 +17,6 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://tradescard-api.vercel.app";
 
-// ---------- Types
 type Tier = "access" | "member" | "pro";
 
 type Me = {
@@ -38,7 +36,7 @@ type ApiAccount = {
   };
 };
 
-// ---------- UI bits
+// --- small UI atoms
 function Badge({ children }: { children: string }) {
   return (
     <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs">
@@ -55,7 +53,6 @@ type PlanCardProps = {
   disabled?: boolean;
   cta: string;
   onClick?: () => void;
-  href?: string;
   ribbon?: string | null;
 };
 
@@ -67,7 +64,6 @@ function PlanCard({
   disabled,
   cta,
   onClick,
-  href,
   ribbon,
 }: PlanCardProps) {
   const cardClass =
@@ -75,12 +71,6 @@ function PlanCard({
     (highlight
       ? "border-amber-400/40 bg-amber-400/10 ring-1 ring-amber-400/30"
       : "border-neutral-800 bg-neutral-900/40");
-
-  const ButtonInner = (
-    <span className="inline-block rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm hover:bg-neutral-800">
-      {cta}
-    </span>
-  );
 
   return (
     <div className={cardClass} aria-disabled={disabled}>
@@ -101,25 +91,23 @@ function PlanCard({
         ))}
       </ul>
       <div className="mt-4">
-        {href ? (
-          <Link href={href} aria-label={`${name} plan`}>{ButtonInner}</Link>
-        ) : (
-          <button
-            type="button"
-            onClick={onClick}
-            disabled={disabled}
-            className="rounded-lg disabled:opacity-60"
-            aria-label={`Choose ${name}`}
-          >
-            {ButtonInner}
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={disabled}
+          className="rounded-lg disabled:opacity-60"
+          aria-label={`Choose ${name}`}
+        >
+          <span className="inline-block rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm hover:bg-neutral-800">
+            {cta}
+          </span>
+        </button>
       </div>
     </div>
   );
 }
 
-// ---------- Page
+// --- page
 export default function JoinPage() {
   const supabase = useMemo(
     () =>
@@ -134,6 +122,20 @@ export default function JoinPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  // capture ?next so we can return the user after auth/checkout
+  const [nextPath, setNextPath] = useState<string | null>(null);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const nxt = url.searchParams.get("next");
+    if (nxt) {
+      setNextPath(nxt);
+      // stash for header-client (magic link) to use after sign-in
+      try {
+        localStorage.setItem("tradescard_next_after_auth", nxt);
+      } catch {}
+    }
+  }, []);
 
   const focusHeaderSignin = useCallback(() => {
     window.tradescardFocusSignin?.();
@@ -179,6 +181,7 @@ export default function JoinPage() {
     })();
   }, [supabase]);
 
+  // Start / change plan via Stripe Checkout (signed-in only)
   const startMembership = async (plan: "member" | "pro") => {
     try {
       setBusy(true);
@@ -188,7 +191,7 @@ export default function JoinPage() {
       const user = data?.session?.user ?? null;
 
       if (!user) {
-        // Not signed in: bring the header email box into focus
+        // not signed in → focus email box; nextPath already stashed
         focusHeaderSignin();
         return;
       }
@@ -196,9 +199,15 @@ export default function JoinPage() {
       const res = await fetch(`${API_BASE}/api/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: user.id, email: user.email, plan }),
+        body: JSON.stringify({
+          user_id: user.id,
+          email: user.email,
+          plan,
+          next: nextPath || null,
+        }),
         keepalive: true,
       });
+
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.url) throw new Error(json?.error || "Checkout failed");
       window.location.href = json.url;
@@ -210,7 +219,7 @@ export default function JoinPage() {
     }
   };
 
-  // Derived state
+  // derived
   const isLoggedOut = !loading && !me;
   const isActive = me?.status === "active";
   const onMember = me?.tier === "member" && isActive;
@@ -220,7 +229,7 @@ export default function JoinPage() {
     <Container>
       <PageHeader
         title="Join TradesCard"
-        subtitle="Start on Access for free. Upgrade anytime for more savings, benefits and rewards."
+        subtitle="Join free, or pick a plan with protection, early deals and monthly rewards. Switch or cancel any time."
         aside={
           isLoggedOut ? (
             <button
@@ -244,13 +253,13 @@ export default function JoinPage() {
         </div>
       )}
 
-      {/* Plans */}
+      {/* Plans (Member is the default path) */}
       <div className="grid gap-4 md:grid-cols-2">
         <PlanCard
           name="Member"
           price="£2.99/mo"
           bullets={[
-            "Full offer catalogue",
+            "Full offer access",
             "Protect Lite benefits",
             "Monthly prize entry",
             "Digital card",
@@ -263,9 +272,7 @@ export default function JoinPage() {
               : "Choose Member"
           }
           disabled={onMember || busy}
-          onClick={() =>
-            isLoggedOut ? (window.location.href = "/pricing") : startMembership("member")
-          }
+          onClick={() => startMembership("member")}
           ribbon={onMember ? "Current" : null}
         />
 
@@ -289,30 +296,35 @@ export default function JoinPage() {
               : "Choose Pro"
           }
           disabled={onPro || busy}
-          onClick={() =>
-            isLoggedOut ? (window.location.href = "/pricing") : startMembership("pro")
-          }
+          onClick={() => startMembership("pro")}
           ribbon={onPro ? "Current" : "Best value"}
         />
       </div>
 
-      {/* Access panel */}
+      {/* Free join block */}
       <div className="mt-6 rounded-xl border border-neutral-800 bg-neutral-900/50 p-5">
         <div className="flex items-center gap-2">
-          <h3 className="font-medium">Just want to look around?</h3>
-          <Badge>ACCESS</Badge>
+          <h3 className="font-medium">Prefer to start free?</h3>
+          <Badge>FREE</Badge>
         </div>
         <p className="text-sm text-neutral-400 mt-1">
-          Start free on Access. You’ll see sample offers and upgrade prompts. You can switch or cancel any time.
+          Join free, redeem offers when signed in, and upgrade any time for protection,
+          early deals and rewards entries.
         </p>
         <div className="mt-3">
           <button
             onClick={focusHeaderSignin}
             className="rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm hover:bg-neutral-800"
           >
-            Sign in / Join free
+            Join free
           </button>
         </div>
+      </div>
+
+      {/* Compliance footnote */}
+      <div className="mt-6 text-[12px] text-neutral-500">
+        No purchase necessary. Free postal entry route is available on public promo pages.
+        Paid and free routes are treated equally in draws.
       </div>
     </Container>
   );
