@@ -202,8 +202,8 @@ export default function AccountPage() {
   };
 
   const eligible = !!me && me.tier !== "access" && me.status === "active";
-  const offersHref = eligible ? "/member/offers" : "/offers";
-  const benefitsHref = eligible ? "/member/benefits" : "/benefits";
+  const offersHref = "/offers";
+  const benefitsHref = "/benefits";
 
   return (
     <Container>

@@ -86,17 +86,14 @@ export default function Nav() {
     };
   }, [supabase, resolveEligibility]);
 
-  const offersHref = elig.eligible ? "/member/offers" : "/offers";
-  const benefitsHref = elig.eligible ? "/member/benefits" : "/benefits";
+  const offersHref = "/offers";
+  const benefitsHref = "/benefits";
 
   const tab = "px-3 py-1 rounded text-sm whitespace-nowrap";
   const tabIdle = "text-neutral-300 hover:bg-neutral-900";
   const tabActive = "bg-neutral-800 text-neutral-100";
 
-  const isActive = (href: string) =>
-    pathname === href ||
-    (href === "/offers" && pathname === "/member/offers") ||
-    (href === "/benefits" && pathname === "/member/benefits");
+  const isActive = (href: string) => pathname === href;
 
   return (
     <header className="sticky top-0 z-50 border-b border-neutral-900/60 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70">
