@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { usePathname } from "next/navigation";
+import { useJoinModal } from "./components/JoinModalContext";
+import { useJoinActions } from "./components/useJoinActions";
 
 type Tier = "access" | "member" | "pro";
 
@@ -21,6 +23,7 @@ type AccountShape = {
 
 declare global {
   interface Window {
+    /** Back-compat: previously scrolled/focused email box; now opens Join modal */
     tradescardFocusSignin?: () => void;
   }
 }
@@ -48,19 +51,16 @@ export default function HeaderAuth() {
     return createClient(url, key);
   }, []);
 
+  // ---- Join modal hooks ----
+  const { openJoin } = useJoinModal();
+  const { startMembership } = useJoinActions(); // we only need this to ensure hook initialises auth
+
   // ---- Auth / account state ----
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [sessionEmail, setSessionEmail] = useState<string | null>(null);
   const [tier, setTier] = useState<Tier>("access");
   const [status, setStatus] = useState<string>("free");
-
-  // ---- Sign-in form state ----
-  const [email, setEmail] = useState("");
-  const [sent, setSent] = useState(false);
-  const [err, setErr] = useState<string>("");
-  const [cooldown, setCooldown] = useState<number>(0);
-  const inputRef = useRef<HTMLInputElement | null>(null);
 
   // ---- Menu state ----
   const [menuOpen, setMenuOpen] = useState(false);
@@ -69,24 +69,14 @@ export default function HeaderAuth() {
   // track in-flight account request to prevent races on fast auth changes
   const accountAbortRef = useRef<AbortController | null>(null);
 
-  // Expose a way for “Join free” links to focus the email box
+  // Back-compat for older code paths that call window.tradescardFocusSignin()
   useEffect(() => {
     if (!isBrowser) return;
-    window.tradescardFocusSignin = () => {
-      inputRef.current?.focus();
-      inputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-    };
+    window.tradescardFocusSignin = () => openJoin("access");
     return () => {
       window.tradescardFocusSignin = undefined;
     };
-  }, []);
-
-  // Prefill email from localStorage (handy on mobile)
-  useEffect(() => {
-    if (!isBrowser) return;
-    const saved = localStorage.getItem("tc:lastEmail");
-    if (saved) setEmail(saved);
-  }, []);
+  }, [openJoin]);
 
   // Close menu on outside click
   useEffect(() => {
@@ -98,13 +88,6 @@ export default function HeaderAuth() {
     document.addEventListener("click", onDoc);
     return () => document.removeEventListener("click", onDoc);
   }, [menuOpen]);
-
-  // Cooldown timer for “Send magic link”
-  useEffect(() => {
-    if (!cooldown) return;
-    const t = setInterval(() => setCooldown((s) => (s > 0 ? s - 1 : 0)), 1000);
-    return () => clearInterval(t);
-  }, [cooldown]);
 
   // Fetch current account (tier/status) with abort protection
   const refreshAccount = useCallback(async (uid: string) => {
@@ -188,38 +171,6 @@ export default function HeaderAuth() {
     };
   }, [supabase, refreshAccount]);
 
-  // Send passwordless link
-  const sendMagic = async () => {
-    setErr("");
-    setSent(false);
-    if (!supabase) {
-      setErr("Auth initialisation failed.");
-      return;
-    }
-    const trimmed = email.trim();
-    // light validation; keep it user-friendly
-    if (!trimmed || !/^\S+@\S+\.\S+$/.test(trimmed)) {
-      setErr("Enter a valid email address.");
-      return;
-    }
-    try {
-      if (isBrowser) localStorage.setItem("tc:lastEmail", trimmed);
-      const base =
-        process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-        (isBrowser ? window.location.origin : "");
-      const { error } = await supabase.auth.signInWithOtp({
-        email: trimmed,
-        options: { emailRedirectTo: `${base}/auth/callback` },
-      });
-      if (error) throw error;
-      setSent(true);
-      setCooldown(30);
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : "Failed to send link.";
-      setErr(message);
-    }
-  };
-
   const signOut = useCallback(async () => {
     try {
       await supabase?.auth.signOut();
@@ -247,69 +198,20 @@ export default function HeaderAuth() {
     );
   }
 
-  // Choose whether to show the full email box (on /join) or compact button elsewhere
-  const showInlineEmail = !userId && pathname === "/join";
-
-  // Not signed in
+  // Not signed in → always use modal (no inline email field)
   if (!userId) {
-    if (!showInlineEmail) {
-      // Compact mode (default on all pages except /join)
-      return (
-        <div className="flex items-center gap-2">
-          <Link
-            href="/join"
-            className="px-3 py-1 rounded bg-neutral-200 text-neutral-900 text-sm hover:bg-neutral-300"
-          >
-            Sign in / Join
-          </Link>
-        </div>
-      );
-    }
+    // If the user is on /join we bias to Member preselected; elsewhere default to Access
+    const initialPlan = pathname === "/join" ? ("member" as const) : ("access" as const);
 
-    // Full email box (on /join)
     return (
-      <form
-        className="flex items-center gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void sendMagic();
-        }}
-        aria-label="Passwordless sign in"
-      >
-        <label htmlFor="email" className="sr-only">
-          Email address
-        </label>
-        <input
-          id="email"
-          ref={inputRef}
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@company.com"
-          className="px-2 py-1 rounded bg-neutral-900 border border-neutral-800 text-sm"
-          aria-invalid={!!err}
-          inputMode="email"
-          autoComplete="email"
-          required
-        />
+      <div className="flex items-center gap-2">
         <button
-          type="submit"
-          disabled={cooldown > 0}
-          className={cx(
-            "px-3 py-1 rounded text-sm",
-            cooldown > 0
-              ? "bg-neutral-800 text-neutral-400 cursor-not-allowed"
-              : "bg-neutral-200 text-neutral-900 hover:bg-neutral-300"
-          )}
+          onClick={() => openJoin(initialPlan)}
+          className="px-3 py-1 rounded bg-neutral-200 text-neutral-900 text-sm hover:bg-neutral-300"
         >
-          {cooldown > 0 ? `Resend in ${cooldown}s` : "Send magic link"}
+          Sign in / Join
         </button>
-        {sent && <span className="text-xs text-neutral-400">Check your email…</span>}
-        {err && (
-          <span role="alert" className="text-xs text-red-400">
-            Error: {err}
-          </span>
-        )}
-      </form>
+      </div>
     );
   }
 
