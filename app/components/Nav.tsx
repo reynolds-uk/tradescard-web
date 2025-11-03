@@ -1,9 +1,8 @@
-// app/components/Nav.tsx
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { useEffect, useMemo, useState, useCallback } from "react";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { usePathname } from "next/navigation";
 import Container from "./Container";
 import HeaderAuth from "../header-client";
@@ -13,11 +12,12 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://tradescard-api.vercel.app";
 
+type Tier = "access" | "member" | "pro";
 type Elig = {
   eligible: boolean;
   email?: string | null;
   status?: string | null;
-  tier?: string | null;
+  tier?: Tier | null;
 };
 
 function cx(...xs: Array<string | false | null | undefined>) {
@@ -27,63 +27,64 @@ function cx(...xs: Array<string | false | null | undefined>) {
 export default function Nav() {
   const pathname = usePathname();
 
-  // Client-only supabase instance
-  const supabase = useMemo(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
-    []
-  );
+  // Client-only Supabase
+  const supabase = useMemo<SupabaseClient>(() => {
+    return createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+  }, []);
 
   const [elig, setElig] = useState<Elig>({ eligible: false });
 
-  useEffect(() => {
-    let aborted = false;
-
-    (async () => {
+  const resolveEligibility = useCallback(
+    async (uid?: string | null, email?: string | null) => {
+      if (!uid) {
+        setElig({ eligible: false });
+        return;
+      }
       try {
-        const { data } = await supabase.auth.getSession();
-        const user = data?.session?.user ?? null;
-
-        if (!user) {
-          if (!aborted) setElig({ eligible: false });
-          return;
-        }
-
         const r = await fetch(
-          `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
+          `${API_BASE}/api/account?user_id=${encodeURIComponent(uid)}`,
           { cache: "no-store" }
         );
-
         if (!r.ok) {
-          if (!aborted) setElig({ eligible: false, email: user.email ?? null });
+          setElig({ eligible: false, email: email ?? null });
           return;
         }
-
         const a = await r.json();
-        const tier = (a?.members?.tier as string) ?? "access";
-        const status = a?.members?.status ?? "free";
+        const tier = (a?.members?.tier as Tier | undefined) ?? "access";
+        const status = (a?.members?.status as string | undefined) ?? "free";
         const isEligible = tier !== "access" && status === "active";
-
-        if (!aborted) {
-          setElig({
-            eligible: isEligible,
-            email: user.email ?? null,
-            tier,
-            status,
-          });
-        }
+        setElig({ eligible: isEligible, email: email ?? null, tier, status });
       } catch {
-        if (!aborted) setElig({ eligible: false });
+        setElig({ eligible: false, email: email ?? null });
       }
+    },
+    []
+  );
+
+  // Initial load + auth change subscription
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      const user = data?.session?.user ?? null;
+      if (!mounted) return;
+      await resolveEligibility(user?.id ?? null, user?.email ?? null);
     })();
 
+    const { data: sub } = supabase.auth.onAuthStateChange(async (_evt, sess) => {
+      const u = sess?.user ?? null;
+      await resolveEligibility(u?.id ?? null, u?.email ?? null);
+    });
+
     return () => {
-      aborted = true;
+      mounted = false;
+      sub?.subscription?.unsubscribe();
     };
-  }, [supabase]);
+  }, [supabase, resolveEligibility]);
 
   const offersHref = elig.eligible ? "/member/offers" : "/offers";
   const benefitsHref = elig.eligible ? "/member/benefits" : "/benefits";
@@ -91,6 +92,7 @@ export default function Nav() {
   const tab = "px-3 py-1 rounded text-sm whitespace-nowrap";
   const tabIdle = "text-neutral-300 hover:bg-neutral-900";
   const tabActive = "bg-neutral-800 text-neutral-100";
+
   const isActive = (href: string) =>
     pathname === href ||
     (href === "/offers" && pathname === "/member/offers") ||
@@ -126,7 +128,7 @@ export default function Nav() {
           >
             Rewards
           </Link>
-          {/* No “Account” tab — handled by HeaderAuth chip/menu */}
+          {/* No “Account” tab — handled by HeaderAuth menu */}
         </nav>
 
         <div className="flex-1" />

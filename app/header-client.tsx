@@ -22,12 +22,10 @@ type AccountShape = {
 
 declare global {
   interface Window {
-    /** Back-compat: previously focused the header email box; now opens Join modal */
+    /** Back-compat: legacy callers open the Join modal */
     tradescardFocusSignin?: () => void;
   }
 }
-
-const isBrowser = typeof window !== "undefined";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -41,42 +39,40 @@ function cx(...xs: Array<string | false | null | undefined>) {
 export default function HeaderAuth() {
   const pathname = usePathname();
 
-  // ---- Supabase (client-only) ----
-  const supabase = useMemo<SupabaseClient | null>(() => {
-    if (!isBrowser) return null;
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-    if (!url || !key) return null;
-    return createClient(url, key);
+  // Supabase (client)
+  const supabase = useMemo<SupabaseClient>(() => {
+    return createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
   }, []);
 
-  // ---- Join modal ----
+  // Join modal
   const { openJoin } = useJoinModal();
 
-  // ---- Auth / account state ----
+  // Auth / account state
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [sessionEmail, setSessionEmail] = useState<string | null>(null);
   const [tier, setTier] = useState<Tier>("access");
   const [status, setStatus] = useState<string>("free");
 
-  // ---- Menu state ----
+  // Menu state
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  // track in-flight account request to prevent races
+  // Track in-flight /api/account request
   const accountAbortRef = useRef<AbortController | null>(null);
 
-  // Back-compat: legacy callers can still trigger join
+  // Back-compat shim
   useEffect(() => {
-    if (!isBrowser) return;
     window.tradescardFocusSignin = () => openJoin("access");
     return () => {
       window.tradescardFocusSignin = undefined;
     };
   }, [openJoin]);
 
-  // Close menu on outside click & Escape
+  // Close menu on outside click & Esc
   useEffect(() => {
     if (!menuOpen) return;
     const onClick = (e: MouseEvent) => {
@@ -134,10 +130,6 @@ export default function HeaderAuth() {
 
     (async () => {
       try {
-        if (!supabase) {
-          if (mounted) setLoading(false);
-          return;
-        }
         const { data } = await supabase.auth.getSession();
         const u = data?.session?.user ?? null;
         if (u) {
@@ -155,7 +147,6 @@ export default function HeaderAuth() {
       }
     })();
 
-    if (!supabase) return;
     const { data: sub } = supabase.auth.onAuthStateChange(async (_evt, sess) => {
       const u = sess?.user ?? null;
       if (u) {
@@ -179,18 +170,18 @@ export default function HeaderAuth() {
 
   const signOut = useCallback(async () => {
     try {
-      await supabase?.auth.signOut();
+      await supabase.auth.signOut();
     } finally {
       setMenuOpen(false);
-      if (isBrowser) window.location.href = "/";
+      window.location.href = "/";
     }
   }, [supabase]);
 
   const goUpgrade = useCallback(() => {
-    if (isBrowser) window.location.href = "/account#upgrade";
+    window.location.href = "/account#upgrade";
   }, []);
   const goManage = useCallback(() => {
-    if (isBrowser) window.location.href = "/account#billing";
+    window.location.href = "/account#billing";
   }, []);
 
   // ---------- Render ----------
@@ -204,9 +195,8 @@ export default function HeaderAuth() {
     );
   }
 
-  // Not signed in → always use modal (no inline email field)
+  // Not signed in → open Join modal (member by default on /join)
   if (!userId) {
-    // If on /join we bias to Member preselected; elsewhere default to Access
     const initialPlan = pathname === "/join" ? ("member" as const) : ("access" as const);
 
     return (
@@ -222,7 +212,7 @@ export default function HeaderAuth() {
     );
   }
 
-  // Signed in → user chip + actions
+  // Signed in → chip + menu
   return (
     <div className="relative" ref={menuRef}>
       <button
