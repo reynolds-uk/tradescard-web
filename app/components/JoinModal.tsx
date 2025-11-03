@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 type Props = {
@@ -22,13 +22,12 @@ function Badge({ children }: { children: string }) {
   );
 }
 
-function Notice({
-  tone = "info",
-  children,
-}: {
+type NoticeProps = {
   tone?: "info" | "success" | "error";
-  children: string;
-}) {
+  children: ReactNode; // <-- allow rich content
+};
+
+function Notice({ tone = "info", children }: NoticeProps) {
   const tones = {
     info: "border-amber-400/40 bg-amber-400/10 text-amber-200",
     success: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
@@ -77,7 +76,8 @@ export default function JoinModal({
         if (!mounted) return;
         setSignedIn(!!data?.session?.user);
       }
-      const saved = typeof window !== "undefined" ? localStorage.getItem("tc:lastEmail") : null;
+      const saved =
+        typeof window !== "undefined" ? localStorage.getItem("tc:lastEmail") : null;
       if (saved && !email) setEmail(saved);
     })();
     return () => {
@@ -116,17 +116,15 @@ export default function JoinModal({
     }
   };
 
-  // when a plan is clicked and the user isn't signed in, focus email box instead of doing nothing
+  // when a plan is clicked and the user isn't signed in, focus email box instead
   const ensureSignedIn = async (action: () => Promise<void>) => {
     if (signedIn) {
       await action();
       return;
     }
-    // nudge: focus email input and show info if not already sent
     if (!sentTo) {
       emailRef.current?.focus();
-      setEmailErr(""); // clear hard error
-      // show a gentle info via sentTo=null + we’ll render a hint below the field
+      setEmailErr("");
     }
   };
 
