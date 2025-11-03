@@ -1,52 +1,62 @@
-// app/offers/page.tsx  (public catalogue)
-'use client';
-import { useEffect, useMemo, useState } from 'react';
-import Container from '@/src/components/Container';
-import { PageHeader } from '@/src/components/PageHeader';
-import { OfferCard } from '@/src/components/OfferCard';
-import { createClient } from '@supabase/supabase-js';
+// app/offers/page.tsx
+"use client";
+
+import { useEffect, useState } from "react";
+import Container from "@/components/Container";
+import PageHeader from "@/components/PageHeader";
+import OfferCard from "@/components/OfferCard";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
   process.env.NEXT_PUBLIC_API_BASE ||
-  'https://tradescard-api.vercel.app';
+  "https://tradescard-api.vercel.app";
 
-type Offer = Parameters<typeof OfferCard>[0]['offer'];
+type Offer = {
+  id: string;
+  title: string;
+  category?: string | null;
+  partner?: string | null;
+  link?: string | null;
+  visibility?: string | null; // public | member | pro
+  starts_at?: string | null;
+  ends_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  is_active?: boolean;
+};
 
-export default function OffersPage() {
-  const supabase = useMemo(
-    () => createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    ),
-    []
-  );
-
+export default function PublicOffersPage() {
   const [items, setItems] = useState<Offer[]>([]);
   const [loading, setLoading] = useState(true);
 
-  async function load() {
-    setLoading(true);
-    const res = await fetch(`${API_BASE}/api/offers?visibility=public`, { cache: 'no-store' });
-    const data = await res.json();
-    setItems(Array.isArray(data) ? data : []);
-    setLoading(false);
-  }
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+        const res = await fetch(`${API_BASE}/api/offers?visibility=public`, {
+          cache: "no-store",
+        });
+        if (!res.ok) throw new Error(`Failed to fetch offers: ${res.status}`);
+        const data = await res.json();
+        setItems(Array.isArray(data) ? data : []);
+      } catch (err) {
+        console.error("Error fetching offers:", err);
+        setItems([]);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  const onRedeem = (o: Offer) => {
+    // track click (fire-and-forget)
+    fetch(`${API_BASE}/api/redemptions/click`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ offer_id: o.id }),
+    }).catch(() => {});
 
-  const onRedeem = async (o: Offer) => {
-    // optional: associate click with user if signed in
-    const { data } = await supabase.auth.getSession();
-    const userId = data?.session?.user?.id;
-    try {
-      await fetch(`${API_BASE}/api/redemptions/click`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ offer_id: o.id, user_id: userId || null }),
-      });
-    } catch {}
-    if (o.link) window.open(o.link, '_blank', 'noopener,noreferrer');
+    if (o.link) window.open(o.link, "_blank", "noopener,noreferrer");
   };
 
   return (
@@ -55,21 +65,31 @@ export default function OffersPage() {
         title="Offers"
         subtitle="Curated savings for the trade. Full catalogue for Members/Pro."
       />
+
       {loading ? (
         <div className="grid gap-3 md:grid-cols-3">
           {[...Array(6)].map((_, i) => (
-            <div key={i} className="h-28 rounded-xl border border-neutral-800 bg-neutral-900 animate-pulse" />
+            <div
+              key={i}
+              className="h-28 rounded-xl border border-neutral-800 bg-neutral-900 animate-pulse"
+            />
           ))}
         </div>
-      ) : items.length ? (
-        <div className="grid gap-3 md:grid-cols-3">
-          {items.map(o => (
-            <OfferCard key={o.id} offer={o} onRedeem={onRedeem} />
-          ))}
-        </div>
+      ) : items.length === 0 ? (
+        <div className="text-neutral-400 text-sm">No current public offers.</div>
       ) : (
-        <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-5">
-          No public offers yet — join free to see more.
+        <div className="grid gap-3 md:grid-cols-3">
+          {items.map((o) => (
+            <OfferCard
+              key={o.id}
+              id={o.id}
+              title={o.title}
+              partner={o.partner ?? undefined}
+              category={o.category ?? undefined}
+              link={o.link ?? undefined}
+              onClick={() => onRedeem(o)}
+            />
+          ))}
         </div>
       )}
     </Container>
