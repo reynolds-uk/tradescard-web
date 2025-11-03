@@ -14,14 +14,20 @@
     "incremental": true,
     "forceConsistentCasingInFileNames": true,
     "allowJs": true,
+
     "baseUrl": ".",
     "paths": {
       "@/*": ["*"],
       "@/app/*": ["app/*"],
-      "@/src/*": ["src/*"],
-      "@/lib/*": ["src/lib/*"],
-      "@/components/*": ["src/components/*"]
+      // ✅ point components to app/components (not src)
+      "@/components/*": ["app/components/*"],
+      // optional convenience alias
+      "@components/*": ["app/components/*"]
+      // ❌ remove src-based aliases (don’t exist):
+      // "@/src/*": ["src/*"],
+      // "@/lib/*": ["src/lib/*"]
     },
+
     "types": ["node"],
     "plugins": [{ "name": "next" }]
   },
