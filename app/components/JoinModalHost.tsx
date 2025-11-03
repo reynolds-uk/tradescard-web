@@ -11,13 +11,13 @@ export default function JoinModalHost() {
   return (
     <JoinModal
       open={open}
-      onClose={closeJoin}
+      onClose={close}
       onJoinFree={joinFree}
-      onMember={() => startMembership('member')}
-      onPro={() => startMembership('pro')}
+      onMember={(billing) => startMembership("member", billing)}
+      onPro={(billing) => startMembership("pro", billing)}
       busy={busy}
       error={error}
-      initialPlan={plan ?? undefined}
+      initialPlan={plan}
     />
   );
 }
