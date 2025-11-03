@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
-import OfferCard from "@/components/OfferCard";
+import { OfferCard, type Offer } from "@/components/OfferCard";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
