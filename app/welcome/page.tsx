@@ -1,15 +1,18 @@
 // app/welcome/page.tsx
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import { useJoinModal } from "@/components/JoinModalContext";
+import { useMe } from "@/components/useMe"; // <-- centralised auth/tier state
 import { track } from "@/lib/track";
-import { useMe } from "@/lib/useMe";
-import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 
 type Tier = "access" | "member" | "pro";
+
+// Trial flags (kept in sync with Account page)
+const TRIAL = process.env.NEXT_PUBLIC_TRIAL_ACTIVE === "true";
+const TRIAL_COPY = process.env.NEXT_PUBLIC_TRIAL_COPY || "Try Member for £1 (90 days)";
 
 const TIER_COPY: Record<Tier, { label: string; blurb: string }> = {
   access: {
@@ -31,21 +34,26 @@ const TIER_COPY: Record<Tier, { label: string; blurb: string }> = {
 
 export default function WelcomePage() {
   const { openJoin } = useJoinModal();
-  const me = useMe(); // { user_id, email, full_name, tier, status } | null
+  const { user, tier, status } = useMe(); // { user?: { id, email }, tier: Tier, status: string }
+  const [copyOk, setCopyOk] = useState(false);
 
-  const tier: Tier = (me?.tier as Tier) ?? "access";
   const cardLabel = TIER_COPY[tier].label;
   const blurb = TIER_COPY[tier].blurb;
 
-  const showTrial = shouldShowTrial(me);
+  // Only show trial chips to users who are NOT already Member/Pro & active
+  const showTrial = useMemo(() => {
+    if (!TRIAL) return false;
+    // show when logged out or effectively on ACCESS/canceled/free
+    if (!user) return true;
+    return tier === "access" || status === "canceled" || status === "free";
+  }, [user, tier, status]);
+
   const accessCta = showTrial ? TRIAL_COPY : "Become a Member (£2.99/mo)";
 
-  const [copyOk, setCopyOk] = useState(false);
-
   const copyCardId = async () => {
-    if (!me?.user_id) return;
+    if (!user?.id) return;
     try {
-      await navigator.clipboard.writeText(me.user_id);
+      await navigator.clipboard.writeText(user.id);
       setCopyOk(true);
       track("welcome_copy_card", { tier });
       setTimeout(() => setCopyOk(false), 1500);
@@ -61,7 +69,6 @@ export default function WelcomePage() {
         subtitle="Here’s your card and the quickest next steps to start getting value."
       />
 
-      {/* Trial ribbon only for eligible users (not Members/Pro) */}
       {showTrial && (
         <div className="mb-4 rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-200">
           Limited-time offer: {TRIAL_COPY}
@@ -75,7 +82,7 @@ export default function WelcomePage() {
           <div className="md:col-span-2">
             <div className="text-2xl font-semibold">TradesCard</div>
             <div className="mt-1 text-sm text-neutral-300">
-              {me?.full_name ?? me?.email ?? "—"}
+              {user?.email ?? "—"}
             </div>
             <div className="mt-3 grid grid-cols-3 gap-2">
               <div className="rounded-lg border border-neutral-800 p-3 text-center">
@@ -84,7 +91,7 @@ export default function WelcomePage() {
               </div>
               <div className="rounded-lg border border-neutral-800 p-3 text-center">
                 <div className="text-xl font-semibold truncate">
-                  {me?.user_id ? `${me.user_id.slice(0, 6)}…${me.user_id.slice(-4)}` : "—"}
+                  {user?.id ? `${user.id.slice(0, 6)}…${user.id.slice(-4)}` : "—"}
                 </div>
                 <div className="mt-1 text-xs text-neutral-400">Card ID</div>
               </div>
@@ -92,7 +99,7 @@ export default function WelcomePage() {
                 <button
                   onClick={copyCardId}
                   className="rounded bg-neutral-800 px-3 py-1 text-sm hover:bg-neutral-700"
-                  disabled={!me?.user_id}
+                  disabled={!user?.id}
                 >
                   {copyOk ? "Copied ✓" : "Copy ID"}
                 </button>
@@ -101,6 +108,7 @@ export default function WelcomePage() {
             </div>
           </div>
 
+          {/* Next steps */}
           <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
             <div className="font-medium">What next?</div>
             <p className="mt-1 text-sm text-neutral-300">{blurb}</p>
@@ -115,13 +123,22 @@ export default function WelcomePage() {
               </a>
 
               {tier !== "access" ? (
-                <a
-                  href="/benefits"
-                  onClick={() => track("welcome_cta_benefits", { tier })}
-                  className="block rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 text-center hover:bg-neutral-800"
-                >
-                  See your benefits
-                </a>
+                <>
+                  <a
+                    href="/benefits"
+                    onClick={() => track("welcome_cta_benefits", { tier })}
+                    className="block rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 text-center hover:bg-neutral-800"
+                  >
+                    See your benefits
+                  </a>
+                  <a
+                    href="/rewards"
+                    onClick={() => track("welcome_cta_rewards", { tier })}
+                    className="block rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 text-center hover:bg-neutral-800"
+                  >
+                    Check rewards
+                  </a>
+                </>
               ) : (
                 <button
                   onClick={() => {
@@ -133,22 +150,12 @@ export default function WelcomePage() {
                   {accessCta}
                 </button>
               )}
-
-              {tier !== "access" && (
-                <a
-                  href="/rewards"
-                  onClick={() => track("welcome_cta_rewards", { tier })}
-                  className="block rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 text-center hover:bg-neutral-800"
-                >
-                  Check rewards
-                </a>
-              )}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Access upsell (hidden for Members/Pro) */}
+      {/* Access upsell only for ACCESS (or logged out) */}
       {tier === "access" && (
         <div className="mt-6 rounded-xl border border-amber-400/30 bg-amber-400/10 p-4">
           <div className="font-medium mb-1">Unlock more with membership</div>
