@@ -118,7 +118,6 @@ export default function AccountPage() {
     );
     if (!accRes.ok) throw new Error(`/api/account failed: ${accRes.status}`);
     const acc: ApiAccount = await accRes.json();
-    // joined_at comes from auth; fall back to undefined
     setView(mapToView(acc, (me?.user as { created_at?: string })?.created_at ?? null));
 
     // Rewards summary (optional)
@@ -193,7 +192,6 @@ export default function AccountPage() {
           user_id: me.user.id,
           email: me.email,
           plan,
-          // hint: API can choose intro price if configured
           trial: showTrial,
           next: "/welcome",
         }),
@@ -214,7 +212,7 @@ export default function AccountPage() {
       setBusy(true);
       setError("");
       if (!me?.user) {
-        routeToJoin(); // ask user to sign in
+        window.location.href = "/join";
         return;
       }
       const res = await fetch(`${API_BASE}/api/stripe/portal`, {
@@ -303,9 +301,9 @@ export default function AccountPage() {
           <p className="text-neutral-400 mb-3">
             Use your email to get a magic sign-in link. No password needed.
           </p>
-          <PrimaryButton onClick={() => routeToJoin()}>
-            Sign in / Join
-          </PrimaryButton>
+          <PrimaryButton onClick={() => routeToJoin("member")}>
+             Sign in / Join
+           </PrimaryButton>
         </div>
       )}
 
@@ -432,7 +430,7 @@ export default function AccountPage() {
                   disabled={busy}
                   className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
                 >
-                  {busy ? "Opening…" : "Go Pro (£7.99/mo)"}
+                  {busy ? "Opening…" : proCta}
                 </button>
               </div>
             )}
