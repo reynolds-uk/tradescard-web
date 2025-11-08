@@ -1,36 +1,41 @@
 // app/components/JoinModalHost.tsx
 "use client";
 
-import { useJoinModal } from "./JoinModalContext";
 import JoinModal from "./JoinModal";
+import { useJoinModal } from "./JoinModalContext";
 import { useJoinActions } from "./useJoinActions";
 
+const TRIAL = process.env.NEXT_PUBLIC_TRIAL_ACTIVE === "true";
+const TRIAL_COPY =
+  process.env.NEXT_PUBLIC_TRIAL_COPY || "Try Member for £1 (90 days)";
+
 export default function JoinModalHost() {
-  const { state, close } = useJoinModal();
-  const { 
-    isPromo,
-    memberPriceText, proPriceText,
-    memberCtaText,  proCtaText,
-    busy, error,
-    startMembership, joinFree
-  } = useJoinActions("/welcome");
+  // from context: no `state` anymore
+  const { open, close } = useJoinModal();
+
+  // where to bounce back after auth/checkout
+  const next =
+    typeof window !== "undefined" ? window.location.pathname : "/";
+
+  // wire actions for the modal CTAs
+  const { busy, error, joinFree, startMembership } = useJoinActions(next);
+
+  // you can use these flags for promo labelling if needed by the modal
+  const isPromo = TRIAL;
+  const memberPriceText = TRIAL ? TRIAL_COPY : "£2.99/mo";
+  const proPriceText = "£7.99/mo";
 
   return (
     <JoinModal
-      open={state.open}
+      open={open}
       onClose={close}
+      onJoinFree={joinFree}
+      onMember={() => startMembership("member")}
+      onPro={() => startMembership("pro")}
       busy={busy}
       error={error}
-      // labels / price decoration
-      isPromo={isPromo}
-      memberPriceText={memberPriceText}
-      proPriceText={proPriceText}
-      memberCtaText={memberCtaText}
-      proCtaText={proCtaText}
-      // actions
-      onJoinFree={() => joinFree({ next: "/welcome" })}
-      onMember={() => startMembership("member", { next: "/welcome" })}
-      onPro={() => startMembership("pro", { next: "/welcome" })}
+      // If you later want to surface promo text inside JoinModal,
+      // just add props for it and pass { isPromo, memberPriceText, proPriceText }.
     />
   );
 }
