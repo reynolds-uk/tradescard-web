@@ -6,7 +6,12 @@ type Props = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   loading?: boolean;
 };
 
-export default function PrimaryButton({ className = "", loading, children, ...btn }: Props) {
+export default function PrimaryButton({
+  className = "",
+  loading,
+  children,
+  ...btn
+}: Props) {
   return (
     <button
       type="button"
@@ -14,7 +19,12 @@ export default function PrimaryButton({ className = "", loading, children, ...bt
       aria-busy={loading ? "true" : undefined}
       disabled={loading || btn.disabled}
       className={[
-        "rounded-xl bg-amber-500 text-black px-4 py-2 font-medium hover:bg-amber-400 disabled:opacity-60 disabled:cursor-not-allowed transition",
+        // Base styles
+        "rounded-xl px-4 py-2 font-medium transition-colors duration-150",
+        "bg-brand text-brand-ink hover:bg-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+        "disabled:opacity-60 disabled:cursor-not-allowed",
+        // Optional brand glow on hover
+        "hover:shadow-brand-ring",
         className,
       ].join(" ")}
     >

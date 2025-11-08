@@ -5,6 +5,7 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "jsx": "preserve",
+
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
@@ -13,25 +14,19 @@
     "isolatedModules": true,
     "incremental": true,
     "forceConsistentCasingInFileNames": true,
-    "allowJs": true,
+    "allowJs": false,
+
+    "verbatimModuleSyntax": true,
+    "noUncheckedIndexedAccess": true,
 
     "baseUrl": ".",
     "paths": {
-      "@/*": ["app/*"],
-      "@/app/*": ["app/*"],
-      "@/components/*": ["app/components/*"],
-      "@/lib/*": ["app/lib/*"]
+      "@/*": ["app/*"]
     },
 
-    "types": ["node"],
+    "types": ["node", "next"],
     "plugins": [{ "name": "next" }]
   },
-  "include": [
-    "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
-    ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts"
-  ],
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules"]
 }
