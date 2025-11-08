@@ -1,4 +1,3 @@
-// app/components/JoinModalHost.tsx
 "use client";
 
 import JoinModal from "./JoinModal";
@@ -10,17 +9,17 @@ const TRIAL_COPY =
   process.env.NEXT_PUBLIC_TRIAL_COPY || "Try Member for £1 (90 days)";
 
 export default function JoinModalHost() {
-  // from context: no `state` anymore
-  const { open, close } = useJoinModal();
+  // Context: expose `open` and `closeJoin` (not `close`)
+  const { open, closeJoin } = useJoinModal();
 
-  // where to bounce back after auth/checkout
+  // Where to return after auth/checkout
   const next =
     typeof window !== "undefined" ? window.location.pathname : "/";
 
-  // wire actions for the modal CTAs
+  // Wire actions to modal CTAs
   const { busy, error, joinFree, startMembership } = useJoinActions(next);
 
-  // you can use these flags for promo labelling if needed by the modal
+  // (Optional) promo flags if you want to thread them into the modal later
   const isPromo = TRIAL;
   const memberPriceText = TRIAL ? TRIAL_COPY : "£2.99/mo";
   const proPriceText = "£7.99/mo";
@@ -28,14 +27,13 @@ export default function JoinModalHost() {
   return (
     <JoinModal
       open={open}
-      onClose={close}
+      onClose={closeJoin}
       onJoinFree={joinFree}
       onMember={() => startMembership("member")}
       onPro={() => startMembership("pro")}
       busy={busy}
       error={error}
-      // If you later want to surface promo text inside JoinModal,
-      // just add props for it and pass { isPromo, memberPriceText, proPriceText }.
+      // If you add props to JoinModal later, pass { isPromo, memberPriceText, proPriceText }
     />
   );
 }
