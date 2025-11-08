@@ -1,20 +1,18 @@
-// app/lib/authErrors.ts
-export type AuthError =
-  | "otp_expired"
-  | "email_link_invalid"
-  | "email_link_is_invalid_or_expired";
+export const AUTH_ERROR_MAP: Record<string, string> = {
+  otp_expired: "That sign-in link has expired. Please request a new one.",
+  otp_disabled: "Magic links are currently unavailable. Please try again shortly.",
+  invalid_grant: "That sign-in link is no longer valid. Request a new one.",
+  server_error: "We had trouble verifying your link. Try again.",
+};
 
-export function readAndClearAuthError(): AuthError | null {
+export function readAuthErrorFromUrl(urlStr?: string) {
   try {
-    const url = new URL(window.location.href);
-    const code = url.searchParams.get("error_code") || url.searchParams.get("error");
-    if (code === "otp_expired" || code === "email_link_invalid" || code === "email_link_is_invalid_or_expired") {
-      // clean the URL so the error doesn't stick
-      window.history.replaceState({}, "", url.pathname + url.hash);
-      return code as AuthError;
-    }
-    return null;
+    const url = new URL(urlStr ?? window.location.href);
+    const code = (url.searchParams.get("error") ||
+      url.searchParams.get("error_code") ||
+      "").toLowerCase();
+    return code ? (AUTH_ERROR_MAP[code] ?? "We couldn’t verify your link. Please request a new one.") : "";
   } catch {
-    return null;
+    return "";
   }
 }
