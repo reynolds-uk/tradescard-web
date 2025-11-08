@@ -1,13 +1,15 @@
 // app/offers/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { useEffect, useState } from "react";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import { OfferCard, type Offer } from "@/components/OfferCard";
 import JoinModal from "@/components/JoinModal";
 import { useJoinActions } from "@/components/useJoinActions";
+import { useMe } from "@/lib/useMe";
+import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
+import { track } from "@/lib/track";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -16,27 +18,13 @@ const API_BASE =
 
 type Tier = "access" | "member" | "pro";
 
-// Optional intro offer (e.g. £1 for 90 days)
-const TRIAL = process.env.NEXT_PUBLIC_TRIAL_ACTIVE === "true";
-const TRIAL_COPY =
-  process.env.NEXT_PUBLIC_TRIAL_COPY || "Unlock everything — try Member for £1 (90 days)";
-
 export default function OffersPage() {
-  // Supabase (client)
-  const supabase = useMemo(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
-    []
-  );
-
-  // State
-  const [me, setMe] = useState<{ tier: Tier; status: string } | null>(null);
-  const [items, setItems] = useState<Offer[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [fetchErr, setFetchErr] = useState<string>("");
+  // Auth/membership (single source of truth)
+  const me = useMe(); // { tier, status } | null
+  const tier: Tier = (me?.tier as Tier) ?? "access";
+  const isActive = me?.status === "active" || me?.status === "trialing";
+  const isEligible = isActive && (tier === "member" || tier === "pro");
+  const showTrial = shouldShowTrial(me);
 
   // Where to bounce back after auth/checkout
   const next = typeof window !== "undefined" ? window.location.pathname : "/offers";
@@ -45,48 +33,27 @@ export default function OffersPage() {
   // Modal
   const [joinOpen, setJoinOpen] = useState(false);
 
+  // Offers
+  const [items, setItems] = useState<Offer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [fetchErr, setFetchErr] = useState<string>("");
+
   useEffect(() => {
     let aborted = false;
-
     (async () => {
       try {
         setLoading(true);
         setFetchErr("");
 
-        // session → account (to know gating state)
-        const { data } = await supabase.auth.getSession();
-        const user = data?.session?.user ?? null;
-
-        if (user) {
-          const r = await fetch(
-            `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
-            { cache: "no-store" }
-          );
-          if (r.ok) {
-            const j = (await r.json()) as {
-              members?: { tier?: Tier; status?: string } | null;
-            };
-            if (!aborted) {
-              setMe({
-                tier: ((j?.members?.tier as Tier) ?? "access") as Tier,
-                status: j?.members?.status ?? "free",
-              });
-            }
-          } else if (!aborted) {
-            setMe(null);
-          }
-        } else if (!aborted) {
-          setMe(null);
-        }
-
-        // catalogue (public list; redemption is still gated)
+        // Public catalogue (redemption is gated)
         const res = await fetch(`${API_BASE}/api/offers?visibility=access`, {
           cache: "no-store",
         });
         if (!res.ok) throw new Error(`Offers failed: ${res.status}`);
-        const dataList = (await res.json()) as unknown;
+        const data = (await res.json()) as unknown;
+
         if (!aborted) {
-          setItems(Array.isArray(dataList) ? (dataList as Offer[]) : []);
+          setItems(Array.isArray(data) ? (data as Offer[]) : []);
         }
       } catch (e) {
         if (!aborted) {
@@ -99,28 +66,24 @@ export default function OffersPage() {
         if (!aborted) setLoading(false);
       }
     })();
-
     return () => {
       aborted = true;
     };
-  }, [supabase]);
-
-  const isEligible =
-    me && me.status === "active" && (me.tier === "member" || me.tier === "pro");
+  }, []);
 
   const redeem = (o: Offer) => {
     if (!isEligible) {
-      // Gate with the unified join modal
       setJoinOpen(true);
       return;
     }
-    // Eligible path: track click then open target
+    // Track and go
     fetch(`${API_BASE}/api/redemptions/click`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ offer_id: o.id }),
       keepalive: true,
     }).catch(() => {});
+    track("offer_click", { offer_id: o.id, category: o.category, tier });
     if (o.link) window.open(o.link, "_blank", "noopener,noreferrer");
   };
 
@@ -130,7 +93,7 @@ export default function OffersPage() {
         title="Offers"
         subtitle="Curated savings for the trade. Join to unlock the full catalogue."
         aside={
-          TRIAL ? (
+          showTrial ? (
             <span className="hidden sm:inline rounded bg-amber-400/20 text-amber-200 text-xs px-2 py-1 border border-amber-400/30">
               {TRIAL_COPY}
             </span>
@@ -144,7 +107,7 @@ export default function OffersPage() {
         </div>
       )}
 
-      {/* Upgrade nudge for ACCESS / inactive users */}
+      {/* Upgrade nudge for Access / inactive users */}
       {!isEligible && (
         <div className="mb-4 rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -153,13 +116,19 @@ export default function OffersPage() {
             </div>
             <div className="flex gap-2">
               <button
-                onClick={() => setJoinOpen(true)}
+                onClick={() => {
+                  track("offers_nudge_upgrade_click", { trial: showTrial });
+                  setJoinOpen(true);
+                }}
                 className="rounded-lg bg-amber-400 text-black px-3 py-1.5 text-sm font-medium hover:opacity-90"
               >
-                {TRIAL ? TRIAL_COPY : "Unlock full access"}
+                {showTrial ? TRIAL_COPY : "Unlock full access"}
               </button>
               <button
-                onClick={() => setJoinOpen(true)}
+                onClick={() => {
+                  track("offers_nudge_join_free_click");
+                  setJoinOpen(true);
+                }}
                 className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm hover:bg-neutral-800"
               >
                 Join free
@@ -190,9 +159,10 @@ export default function OffersPage() {
                 key={o.id}
                 offer={o}
                 onRedeem={() => redeem(o)}
-                // Optional: grey out CTA when ineligible
                 disabled={!isEligible}
-                ctaLabel={!isEligible ? (TRIAL ? TRIAL_COPY : "Join to redeem") : undefined}
+                ctaLabel={
+                  !isEligible ? (showTrial ? TRIAL_COPY : "Join to redeem") : undefined
+                }
               />
             ))
           )}
