@@ -93,7 +93,7 @@ export default function OffersPage() {
 
   const redeem = (o: Offer) => {
     if (!canRedeem) {
-      handleJoinFree("card");
+      unlockClick("card");
       return;
     }
     // Track then open
