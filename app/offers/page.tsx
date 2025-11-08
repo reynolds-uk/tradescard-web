@@ -22,13 +22,12 @@ type Tier = "access" | "member" | "pro";
 
 export default function OffersPage() {
   // Auth/membership
-  const me = useMe(); // { user, tier, status }
-  const ready = useMeReady(); // prevent logged-out ➜ in flicker
+  const me = useMe();                   // { user, tier, status }
+  const ready = useMeReady();           // avoid auth flash
   const tier: Tier = (me?.tier as Tier) ?? "access";
-  const isPaidTier = tier === "member" || tier === "pro";
-  const isActivePaid =
-    isPaidTier && (me?.status === "active" || me?.status === "trialing");
   const isLoggedIn = !!me?.user;
+  const isPaidTier = tier === "member" || tier === "pro";
+  const isActivePaid = isPaidTier && (me?.status === "active" || me?.status === "trialing");
   const showTrial = shouldShowTrial(me);
 
   // Where to bounce back after checkout/auth
@@ -49,7 +48,7 @@ export default function OffersPage() {
         setLoading(true);
         setFetchErr("");
 
-        // Paid gets all offers; others see public teaser
+        // Paid = full catalogue; everyone else = access/teaser
         const url = isActivePaid
           ? `${API_BASE}/api/offers`
           : `${API_BASE}/api/offers?visibility=access`;
@@ -62,9 +61,7 @@ export default function OffersPage() {
       } catch (e) {
         if (!aborted) {
           setFetchErr(
-            e instanceof Error
-              ? e.message
-              : "Failed to load offers. Please try again."
+            e instanceof Error ? e.message : "Failed to load offers. Please try again."
           );
           setItems([]);
         }
@@ -78,19 +75,25 @@ export default function OffersPage() {
     };
   }, [ready, isActivePaid]);
 
-  const unlockClick = (source: "banner" | "card" | "sticky") => {
+  // Redemption rules:
+  // - Visitor (not logged in): prompt to Join Free (create Access account)
+  // - Access (logged in): CAN redeem displayed offers; sees upgrade nudges to get more offers
+  // - Paid: CAN redeem all displayed offers
+  const canRedeem = isLoggedIn; // key change: Access users can redeem
+
+  const handleUnlockPaid = (source: "banner" | "card" | "sticky") => {
     track("offers_nudge_upgrade_click", { trial: showTrial, source });
     routeToJoin("member");
   };
 
-  const joinFreeClick = (source: "banner" | "sticky") => {
+  const handleJoinFree = (source: "banner" | "sticky") => {
     track("offers_nudge_join_free_click", { source });
     routeToJoin(); // Access flow
   };
 
   const redeem = (o: Offer) => {
-    if (!isActivePaid) {
-      unlockClick("card");
+    if (!canRedeem) {
+      handleJoinFree("card");
       return;
     }
     // Track then open
@@ -108,35 +111,42 @@ export default function OffersPage() {
   const subtitle = useMemo(() => {
     if (!ready) return "Loading your offers…";
     if (isActivePaid) return "All your member deals in one place.";
-    if (isLoggedIn)
-      return "Browse the catalogue. Unlock member-only redemptions when you upgrade.";
-    return "A taste of the savings available. Join free or pick a plan to unlock full access.";
+    if (isLoggedIn) return "You can redeem these now. Upgrade to unlock the full catalogue.";
+    return "See what’s on. Join free to redeem, upgrade to unlock more.";
   }, [ready, isActivePaid, isLoggedIn]);
 
   const showSkeleton = !ready || loading;
 
+  // Sticky mobile CTA logic:
+  // - Visitor: Join free + Try Member
+  // - Access: Upgrade to unlock more (no Join free)
+  // - Paid: none
+  const showSticky = ready && !isActivePaid;
+  const stickyIsVisitor = showSticky && !isLoggedIn;
+
   return (
     <>
-      {/* Sticky mobile CTA (only when not eligible and auth is ready) */}
-      {!isActivePaid && ready && (
+      {showSticky && (
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70 md:hidden">
           <div className="mx-auto max-w-5xl px-4 py-3 flex items-center justify-between gap-2">
             <div className="text-xs text-neutral-300">
-              Unlock member-only redemptions
+              {stickyIsVisitor ? "Join free to redeem" : "Upgrade to unlock more offers"}
             </div>
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => joinFreeClick("sticky")}
-                className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs font-medium hover:bg-neutral-800"
-              >
-                Join free
-              </button>
+              {stickyIsVisitor && (
+                <button
+                  onClick={() => handleJoinFree("sticky")}
+                  className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs font-medium hover:bg-neutral-800"
+                >
+                  Join free
+                </button>
+              )}
               <PrimaryButton
-                onClick={() => unlockClick("sticky")}
+                onClick={() => handleUnlockPaid("sticky")}
                 disabled={busy}
                 className="text-xs px-3 py-1.5"
               >
-                {showTrial ? TRIAL_COPY : "Unlock access"}
+                {showTrial ? TRIAL_COPY : stickyIsVisitor ? "Try Member" : "Unlock more"}
               </PrimaryButton>
             </div>
           </div>
@@ -148,7 +158,7 @@ export default function OffersPage() {
           title="Offers"
           subtitle={subtitle}
           aside={
-            showTrial ? (
+            showTrial && !isActivePaid ? (
               <span className="hidden sm:inline rounded bg-amber-400/20 text-amber-200 text-xs px-2 py-1 border border-amber-400/30">
                 {TRIAL_COPY}
               </span>
@@ -167,28 +177,30 @@ export default function OffersPage() {
           </div>
         )}
 
-        {/* Upgrade nudge (only when not eligible and ready) */}
+        {/* Upgrade/Join nudge (desktop) */}
         {!isActivePaid && ready && (
-          <div className="mb-4 rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm text-neutral-300">
-                Sign in and upgrade to unlock member-only redemptions.
-              </div>
-              <div className="flex gap-2">
+          <div className="mb-4 hidden md:flex items-center justify-between rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
+            <div className="text-sm text-neutral-300">
+              {isLoggedIn
+                ? "Upgrade to unlock the full catalogue."
+                : "Join free to redeem, then upgrade for more."}
+            </div>
+            <div className="flex gap-2">
+              {!isLoggedIn && (
                 <button
-                  onClick={() => joinFreeClick("banner")}
+                  onClick={() => handleJoinFree("banner")}
                   className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm hover:bg-neutral-800"
                 >
                   Join free
                 </button>
-                <PrimaryButton
-                  onClick={() => unlockClick("banner")}
-                  disabled={busy}
-                  className="px-3 py-1.5"
-                >
-                  {showTrial ? TRIAL_COPY : "Unlock full access"}
-                </PrimaryButton>
-              </div>
+              )}
+              <PrimaryButton
+                onClick={() => handleUnlockPaid("banner")}
+                disabled={busy}
+                className="px-3 py-1.5"
+              >
+                {showTrial ? TRIAL_COPY : isLoggedIn ? "Unlock more" : "Try Member"}
+              </PrimaryButton>
             </div>
           </div>
         )}
@@ -215,44 +227,20 @@ export default function OffersPage() {
                   key={o.id}
                   offer={o}
                   onRedeem={() => redeem(o)}
-                  userTier={tier} // hide PUBLIC for paid users
-                  activePaid={isActivePaid} // paid members never see teaser states
+                  userTier={tier}                 // paid users won't see "PUBLIC" badge
+                  activePaid={isActivePaid}       // card can hide lock/teaser for paid
+                  // CTA text per state for *non-paid visitors only*.
+                  // Access users can redeem, so let the card show "Redeem" naturally.
                   ctaLabel={
-                    !isActivePaid
+                    !isLoggedIn
                       ? showTrial
                         ? TRIAL_COPY
-                        : isLoggedIn
-                        ? "Upgrade to redeem"
-                        : "Join to redeem"
+                        : "Join free to redeem"
                       : undefined
                   }
                 />
               ))
             )}
-          </div>
-        )}
-
-        {/* Secondary nudge (desktop) */}
-        {!isActivePaid && ready && (
-          <div className="mt-6 hidden md:flex items-center justify-between rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
-            <div className="text-sm text-neutral-300">
-              Ready to unlock the full catalogue?
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => joinFreeClick("banner")}
-                className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm hover:bg-neutral-800"
-              >
-                Join free
-              </button>
-              <PrimaryButton
-                onClick={() => unlockClick("banner")}
-                disabled={busy}
-                className="px-3 py-1.5"
-              >
-                {showTrial ? TRIAL_COPY : "Unlock access"}
-              </PrimaryButton>
-            </div>
           </div>
         )}
       </Container>
