@@ -4,85 +4,73 @@
 import { useEffect, useMemo, useState } from "react";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
-import PrimaryButton from "@/components/PrimaryButton";
 import { useMe } from "@/lib/useMe";
 import { useMeReady } from "@/lib/useMeReady";
-import { routeToJoin } from "@/lib/routeToJoin";
-
-type Tier = "access" | "member" | "pro";
-
-type RewardsSummary = {
-  lifetime_points: number;
-  points_this_month: number; // base points before tier boost
-};
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://tradescard-api.vercel.app";
 
-// Numeric boost used to convert points ➜ entries
-const TIER_BOOST: Record<Tier, number> = {
-  access: 1.0,
-  member: 1.25,
-  pro: 1.5,
+type Tier = "access" | "member" | "pro";
+
+type RewardsSummary = {
+  lifetime_points: number;
+  points_this_month: number;
 };
 
 export default function MemberRewardsPage() {
-  const me = useMe();                   // { user?, email?, tier, status }
-  const ready = useMeReady();
+  const me = useMe();                  // { user?, tier?, status? }
+  const ready = useMeReady();          // avoid auth flash
 
   const tier: Tier = (me?.tier as Tier) ?? "access";
   const isPaid =
     (tier === "member" || tier === "pro") &&
     (me?.status === "active" || me?.status === "trialing");
 
-  // If someone hits this route without a paid plan (stale cookie / deep link), bounce to promo.
-  useEffect(() => {
-    if (ready && !isPaid) window.location.replace("/rewards");
-  }, [ready, isPaid]);
+  const uid = useMemo(() => me?.user?.id ?? null, [me?.user?.id]);
 
-  const subtitle = useMemo(() => {
-    if (!ready) return "Loading…";
-    return "Earn points every month you’re a paid member. Points become draw entries.";
-  }, [ready]);
-
-  // -----------------------------
-  // Fetch rewards summary
-  // -----------------------------
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string>("");
+  const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<RewardsSummary | null>(null);
+  const [error, setError] = useState<string>("");
 
+  // Fetch rewards once we *know* there is a user
   useEffect(() => {
-    if (!ready || !isPaid || !me?.user?.id) return;
+    if (!ready) return;
+    if (!uid) {
+      // Not signed in; nothing to fetch
+      setSummary(null);
+      setLoading(false);
+      return;
+    }
 
     let aborted = false;
+
     (async () => {
       try {
         setLoading(true);
-        setErr("");
+        setError("");
 
         const url = `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(
-          me.user.id
+          uid
         )}`;
 
         const res = await fetch(url, { cache: "no-store" });
         if (!res.ok) throw new Error(`rewards/summary ${res.status}`);
 
-        const json = (await res.json()) as RewardsSummary;
+        const data: RewardsSummary = await res.json();
         if (!aborted) {
           setSummary({
-            lifetime_points: Number.isFinite(json?.lifetime_points)
-              ? json.lifetime_points
+            lifetime_points: Number.isFinite(data.lifetime_points)
+              ? data.lifetime_points
               : 0,
-            points_this_month: Number.isFinite(json?.points_this_month)
-              ? json.points_this_month
+            points_this_month: Number.isFinite(data.points_this_month)
+              ? data.points_this_month
               : 0,
           });
         }
       } catch (e) {
-        if (!aborted) setErr(e instanceof Error ? e.message : "Couldn’t load rewards.");
+        if (!aborted) setError(e instanceof Error ? e.message : "Failed to load rewards");
       } finally {
         if (!aborted) setLoading(false);
       }
@@ -91,68 +79,74 @@ export default function MemberRewardsPage() {
     return () => {
       aborted = true;
     };
-  }, [ready, isPaid, me?.user?.id]);
+  }, [ready, uid]);
 
-  const boost = TIER_BOOST[tier] ?? 1.0;
-  const entriesThisMonth =
-    summary ? Math.floor(summary.points_this_month * boost) : null;
+  const subtitle = useMemo(() => {
+    if (!ready) return "Loading…";
+    if (!uid) return "Sign in to see your rewards.";
+    if (!isPaid) return "Become a paid member to earn points and monthly draw entries.";
+    return "Earn points every month you’re a paid member. Points convert to draw entries.";
+  }, [ready, uid, isPaid]);
+
+  // Basic tier boost copy
+  const tierBoost = tier === "pro" ? "1.5×" : "1.25×";
 
   return (
     <Container>
       <PageHeader title="Rewards" subtitle={subtitle} />
 
-      {err && (
-        <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 p-3 text-red-300 text-sm">
-          {err}
+      {/* Errors */}
+      {error && (
+        <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300 text-sm">
+          {error}
         </div>
       )}
 
-      {/* Top stat cards */}
-      <div className="grid gap-4 md:grid-cols-3">
-        <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
-          <div className="text-sm text-neutral-400">Points this month (base)</div>
-          <div className="mt-1 text-2xl font-semibold">
-            {loading ? "—" : summary ? summary.points_this_month : "—"}
-          </div>
+      {/* Skeleton */}
+      {(!ready || loading) && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-24 rounded-2xl border border-neutral-800 bg-neutral-900/60 animate-pulse"
+            />
+          ))}
         </div>
+      )}
 
-        <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
-          <div className="text-sm text-neutral-400">Tier boost</div>
-          <div className="mt-1 text-2xl font-semibold">
-            {tier === "pro" ? "1.50×" : tier === "member" ? "1.25×" : "1.00×"}
-          </div>
-        </div>
+      {/* Content (only when ready & not loading) */}
+      {ready && !loading && (
+        <>
+          {uid && isPaid ? (
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
+                <div className="text-xs text-neutral-400 mb-1">Points this month (base)</div>
+                <div className="text-2xl font-semibold">
+                  {summary ? summary.points_this_month : "—"}
+                </div>
+              </div>
 
-        <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
-          <div className="text-sm text-neutral-400">Entries this month</div>
-          <div className="mt-1 text-2xl font-semibold">
-            {loading ? "—" : entriesThisMonth ?? "—"}
-          </div>
-        </div>
-      </div>
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
+                <div className="text-xs text-neutral-400 mb-1">Tier boost</div>
+                <div className="text-2xl font-semibold">{tierBoost}</div>
+              </div>
 
-      {/* Lifetime + explainer */}
-      <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
-          <div className="text-sm text-neutral-400">Lifetime points</div>
-          <div className="mt-1 text-2xl font-semibold">
-            {loading ? "—" : summary ? summary.lifetime_points : "—"}
-          </div>
-          <p className="mt-2 text-sm text-neutral-400">
-            Lifetime points remain on your profile but only qualify for draws while your membership
-            is active.
-          </p>
-        </div>
-
-        {tier === "member" && (
-          <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 flex items-center justify-between">
-            <div className="text-sm text-neutral-300">
-              Go <span className="font-medium">Pro</span> for a bigger monthly boost and early-access deals.
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
+                <div className="text-xs text-neutral-400 mb-1">Lifetime points</div>
+                <div className="text-2xl font-semibold">
+                  {summary ? summary.lifetime_points : "—"}
+                </div>
+              </div>
             </div>
-            <PrimaryButton onClick={() => routeToJoin("pro")}>Upgrade to Pro</PrimaryButton>
-          </div>
-        )}
-      </div>
+          ) : (
+            // Fallback if signed out or not paid (this page should usually be reached from paid area)
+            <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 text-sm text-neutral-300">
+              This area shows your member rewards once you’re signed in with an active
+              membership.
+            </div>
+          )}
+        </>
+      )}
     </Container>
   );
 }
