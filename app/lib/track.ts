@@ -9,21 +9,20 @@ export type TrackEvent =
   | "welcome_cta_join_member_banner"
   | "nav_upgrade_click"
   | "offers_list_loaded"
-  | "offer_click"                // <-- added
-  | "offer_redeem_click"         // <-- useful: successful redemption click
-  | "offers_gate_open"           // <-- useful: opened join modal from offers
+  | "offers_gate_open"
+  | "offer_click"
+  | "offer_redeem_click"
+  | "offers_nudge_upgrade_click"   // <-- add this
+  | "offers_nudge_join_free_click" // <-- add if you track the second button
   | "join_free"
   | "checkout_start_member"
   | "checkout_start_pro";
 
 export function track(name: TrackEvent, props?: Record<string, unknown>) {
   try {
-    // no-op stub; wire to your analytics later
     if (typeof window !== "undefined") {
       // eslint-disable-next-line no-console
       console.debug("[track]", name, props ?? {});
     }
-  } catch {
-    /* ignore */
-  }
+  } catch {/* no-op */}
 }
