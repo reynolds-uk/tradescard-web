@@ -39,7 +39,8 @@ function Pill({
   tone?: "muted" | "ok" | "warn";
   className?: string;
 }) {
-  const base = "rounded px-2 py-0.5 text-[11px] leading-none inline-flex items-center gap-1";
+  const base =
+    "rounded px-2 py-0.5 text-[11px] leading-none inline-flex items-center gap-1";
   const cls =
     tone === "ok"
       ? "bg-green-900/30 text-green-300"
@@ -77,14 +78,15 @@ function SkeletonCard() {
 
 /* Page */
 export default function BenefitsPage() {
-  const me = useMe();                 // { user?, email?, tier, status }
-  const ready = useMeReady();         // avoid logged-out → in flash
+  const me = useMe();          // { user?, email?, tier, status }
+  const ready = useMeReady();  // avoid logged-out → in flash
   const showTrial = shouldShowTrial(me);
 
   const tier: Tier = (me?.tier as Tier) ?? "access";
   const tierIndex = TIER_ORDER[tier];
   const isPaidTier = tier === "member" || tier === "pro";
-  const isActivePaid = isPaidTier && (me?.status === "active" || me?.status === "trialing");
+  const isActivePaid =
+    isPaidTier && (me?.status === "active" || me?.status === "trialing");
 
   const [benefits, setBenefits] = useState<Benefit[]>([]);
   const [loading, setLoading] = useState(true);
@@ -150,7 +152,8 @@ export default function BenefitsPage() {
 
   const subtitle = useMemo(() => {
     if (!ready) return "Loading your benefits…";
-    if (isActivePaid) return "Your membership includes the benefits below. Upgrade to unlock more.";
+    if (isActivePaid)
+      return "Your membership includes the benefits below. Upgrade to unlock more.";
     return "Built-in protection and support for paid members. Join to unlock benefits.";
   }, [ready, isActivePaid]);
 
@@ -161,20 +164,18 @@ export default function BenefitsPage() {
         subtitle={subtitle}
         aside={
           ready
-            ? isActivePaid
-              ? (
+            ? isActivePaid ? (
                 <div className="flex items-center gap-2 text-sm">
                   <TierTag tier={tier} />
-                  <Pill tone={me?.status === "active" ? "ok" : "warn"}>{me?.status}</Pill>
+                  <Pill tone={me?.status === "active" ? "ok" : "warn"}>
+                    {me?.status}
+                  </Pill>
                 </div>
-              )
-              : showTrial
-              ? (
+              ) : showTrial ? (
                 <span className="hidden sm:inline rounded border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-200">
                   {TRIAL_COPY}
                 </span>
-              )
-              : null
+              ) : null
             : null
         }
       />
@@ -227,7 +228,9 @@ export default function BenefitsPage() {
             <div className="mb-3 flex items-end justify-between gap-2">
               <h2 className="text-sm font-medium text-neutral-300">
                 Included in your plan
-                <span className="ml-2 text-xs text-neutral-500">({eligible.length})</span>
+                <span className="ml-2 text-xs text-neutral-500">
+                  ({eligible.length})
+                </span>
               </h2>
               {eligible.length === 0 && (
                 <div className="text-xs text-neutral-500">
@@ -254,7 +257,9 @@ export default function BenefitsPage() {
                     </div>
                     <div className="font-semibold">{b.title}</div>
                     {b.description && (
-                      <div className="mt-1 text-sm text-neutral-400">{b.description}</div>
+                      <div className="mt-1 text-sm text-neutral-400">
+                        {b.description}
+                      </div>
                     )}
                   </div>
                 ))}
@@ -271,7 +276,9 @@ export default function BenefitsPage() {
             <div className="mb-3 flex items-end justify-between gap-2">
               <h2 className="text-sm font-medium text-neutral-300">
                 Upgrade to unlock
-                <span className="ml-2 text-xs text-neutral-500">({locked.length})</span>
+                <span className="ml-2 text-xs text-neutral-500">
+                  ({locked.length})
+                </span>
               </h2>
               {locked.length > 0 && (
                 <button
@@ -307,11 +314,15 @@ export default function BenefitsPage() {
                       </div>
                       <div className="font-semibold">{b.title}</div>
                       {b.description && (
-                        <div className="mt-1 text-sm text-neutral-400">{b.description}</div>
+                        <div className="mt-1 text-sm text-neutral-400">
+                          {b.description}
+                        </div>
                       )}
                       <div className="mt-3">
                         {nextCta === "Upgrade to Pro" ? (
-                          <PrimaryButton onClick={goUpgrade}>Upgrade to Pro</PrimaryButton>
+                          <PrimaryButton onClick={goUpgrade}>
+                            Upgrade to Pro
+                          </PrimaryButton>
                         ) : nextCta === "Join to unlock" ? (
                           <PrimaryButton onClick={() => routeToJoin("member")}>
                             {showTrial ? TRIAL_COPY : "Join to unlock"}
@@ -342,8 +353,9 @@ export default function BenefitsPage() {
             <div className="mt-6 rounded-xl border border-amber-400/30 bg-amber-400/10 p-5">
               <div className="font-medium mb-1">Benefits are for paid members</div>
               <p className="text-sm text-neutral-200">
-                Join as <span className="font-semibold">Member</span> for core protection and
-                support, or go <span className="font-semibold">Pro</span> for more.
+                Join as <span className="font-semibold">Member</span> for core
+                protection and support, or go{" "}
+                <span className="font-semibold">Pro</span> for more.
               </p>
               <PrimaryButton onClick={() => routeToJoin("member")} className="mt-3">
                 {showTrial ? TRIAL_COPY : "See membership options"}
@@ -355,7 +367,11 @@ export default function BenefitsPage() {
 
       {/* “How to use” drawer */}
       {detail && (
-        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+        >
           <button
             aria-label="Close"
             onClick={() => setDetail(null)}
@@ -371,7 +387,9 @@ export default function BenefitsPage() {
                 Close
               </button>
             </div>
-            {detail.description && <p className="text-sm text-neutral-300">{detail.description}</p>}
+            {detail.description && (
+              <p className="text-sm text-neutral-300">{detail.description}</p>
+            )}
             <div className="mt-4">
               {detail.link ? (
                 <a
@@ -383,7 +401,9 @@ export default function BenefitsPage() {
                   Open instructions
                 </a>
               ) : (
-                <div className="text-sm text-neutral-400">No instructions link available yet.</div>
+                <div className="text-sm text-neutral-400">
+                  No instructions link available yet.
+                </div>
               )}
             </div>
           </div>

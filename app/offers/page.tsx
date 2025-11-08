@@ -22,17 +22,18 @@ type Tier = "access" | "member" | "pro";
 
 export default function OffersPage() {
   // Auth/membership
-  const me = useMe();                 // { user, tier, status }
-  const ready = useMeReady();         // prevent logged-out ➜ in flicker
+  const me = useMe(); // { user, tier, status }
+  const ready = useMeReady(); // prevent logged-out ➜ in flicker
   const tier: Tier = (me?.tier as Tier) ?? "access";
   const isPaidTier = tier === "member" || tier === "pro";
-  const isActivePaid = isPaidTier && (me?.status === "active" || me?.status === "trialing");
+  const isActivePaid =
+    isPaidTier && (me?.status === "active" || me?.status === "trialing");
   const isLoggedIn = !!me?.user;
   const showTrial = shouldShowTrial(me);
 
   // Where to bounce back after checkout/auth
   const next = "/offers";
-  const { busy, error, startMembership } = useJoinActions(next);
+  const { busy, error } = useJoinActions(next);
 
   // Offers list
   const [items, setItems] = useState<Offer[]>([]);
@@ -61,7 +62,9 @@ export default function OffersPage() {
       } catch (e) {
         if (!aborted) {
           setFetchErr(
-            e instanceof Error ? e.message : "Failed to load offers. Please try again."
+            e instanceof Error
+              ? e.message
+              : "Failed to load offers. Please try again."
           );
           setItems([]);
         }
@@ -105,7 +108,8 @@ export default function OffersPage() {
   const subtitle = useMemo(() => {
     if (!ready) return "Loading your offers…";
     if (isActivePaid) return "All your member deals in one place.";
-    if (isLoggedIn) return "Browse the catalogue. Unlock member-only redemptions when you upgrade.";
+    if (isLoggedIn)
+      return "Browse the catalogue. Unlock member-only redemptions when you upgrade.";
     return "A taste of the savings available. Join free or pick a plan to unlock full access.";
   }, [ready, isActivePaid, isLoggedIn]);
 
@@ -117,7 +121,9 @@ export default function OffersPage() {
       {!isActivePaid && ready && (
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70 md:hidden">
           <div className="mx-auto max-w-5xl px-4 py-3 flex items-center justify-between gap-2">
-            <div className="text-xs text-neutral-300">Unlock member-only redemptions</div>
+            <div className="text-xs text-neutral-300">
+              Unlock member-only redemptions
+            </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => joinFreeClick("sticky")}
@@ -209,8 +215,8 @@ export default function OffersPage() {
                   key={o.id}
                   offer={o}
                   onRedeem={() => redeem(o)}
-                  userTier={tier}           // ← lets the card hide "PUBLIC" for paid users
-                  activePaid={isActivePaid} // ← paid members never see locked/teaser states
+                  userTier={tier} // hide PUBLIC for paid users
+                  activePaid={isActivePaid} // paid members never see teaser states
                   ctaLabel={
                     !isActivePaid
                       ? showTrial
@@ -229,7 +235,9 @@ export default function OffersPage() {
         {/* Secondary nudge (desktop) */}
         {!isActivePaid && ready && (
           <div className="mt-6 hidden md:flex items-center justify-between rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
-            <div className="text-sm text-neutral-300">Ready to unlock the full catalogue?</div>
+            <div className="text-sm text-neutral-300">
+              Ready to unlock the full catalogue?
+            </div>
             <div className="flex gap-2">
               <button
                 onClick={() => joinFreeClick("banner")}

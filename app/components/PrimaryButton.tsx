@@ -1,14 +1,24 @@
+// app/components/PrimaryButton.tsx
 "use client";
-import type { ButtonHTMLAttributes } from "react";
+import * as React from "react";
 
-export default function PrimaryButton(
-  props: ButtonHTMLAttributes<HTMLButtonElement>
-) {
-  const { className = "", ...rest } = props;
+type Props = React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  loading?: boolean;
+};
+
+export default function PrimaryButton({ className = "", loading, children, ...btn }: Props) {
   return (
     <button
-      {...rest}
-      className={`rounded-xl px-4 py-2 font-medium disabled:opacity-50 btn-brand ${className}`}
-    />
+      type="button"
+      {...btn}
+      aria-busy={loading ? "true" : undefined}
+      disabled={loading || btn.disabled}
+      className={[
+        "rounded-xl bg-amber-500 text-black px-4 py-2 font-medium hover:bg-amber-400 disabled:opacity-60 disabled:cursor-not-allowed transition",
+        className,
+      ].join(" ")}
+    >
+      {loading ? "Please wait…" : children}
+    </button>
   );
 }
