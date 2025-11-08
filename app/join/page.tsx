@@ -15,20 +15,33 @@ import { track } from "@/lib/track";
 
 type Plan = "access" | "member" | "pro";
 
+const APP_URL =
+  process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
+
+const AUTH_ERROR_MAP: Record<string, string> = {
+  otp_expired: "That sign-in link has expired. Please request a new one.",
+  otp_disabled: "Magic links are currently unavailable. Please try again shortly.",
+  invalid_grant: "That sign-in link is no longer valid. Request a new one.",
+  server_error: "We had trouble verifying your link. Try again.",
+};
+
 export default function JoinPage() {
   const router = useRouter();
   const params = useSearchParams();
+
   const me = useMe();
   const { user } = me;
-  const next = "/join";
-  const { busy, error, startMembership } = useJoinActions(next);
 
-  // local state
+  // Paid funnel / checkout helper
+  const { busy, error: checkoutError, startMembership } = useJoinActions("/join");
+
+  // UI state
+  const [tab, setTab] = useState<"join" | "signin">("join");
   const [email, setEmail] = useState("");
   const [info, setInfo] = useState<string>("");
   const [sent, setSent] = useState(false);
-  const [wanted, setWanted] = useState<Plan | null>(null);
-  const [inlineEmailFor, setInlineEmailFor] = useState<Plan | null>(null);
+  const [wanted, setWanted] = useState<Exclude<Plan, "access"> | null>(null);
+  const [inlineEmailFor, setInlineEmailFor] = useState<Exclude<Plan, "access"> | null>(null);
   const emailRef = useRef<HTMLInputElement>(null);
 
   // Supabase client (client-side auth flow)
@@ -41,84 +54,105 @@ export default function JoinPage() {
     []
   );
 
-  // subtle trial eligibility
   const showTrialChip = shouldShowTrial(me);
 
-  // If already signed in, /join isn't needed → into the app
+  // Default tab & intent from query string
+  useEffect(() => {
+    const mode = (params.get("mode") || "").toLowerCase();
+    const qPlan = params.get("plan") as Exclude<Plan, "access"> | null;
+    if (mode === "signin") setTab("signin");
+    if (qPlan) setWanted(qPlan);
+  }, [params]);
+
+  // Handle auth redirect errors (e.g., clicked the magic link twice)
+  useEffect(() => {
+    const err = params.get("error") || params.get("error_code");
+    if (!err) return;
+    const key = (err || "").toLowerCase();
+    const msg = AUTH_ERROR_MAP[key] || "We couldn’t verify your link. Please request a new one.";
+    setTab("signin");
+    setInfo(msg);
+    // Clean the URL
+    try {
+      const url = new URL(window.location.href);
+      ["error", "error_code", "error_description", "status", "success", "canceled"].forEach((k) =>
+        url.searchParams.delete(k)
+      );
+      window.history.replaceState({}, "", url.pathname);
+    } catch {}
+  }, [params]);
+
+  // If already signed in, /join isn’t needed → take them to offers (or keep if we want inline upgrade)
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getSession();
-      if (data?.session?.user) router.replace("/offers");
+      if (data?.session?.user) {
+        // If they came with a paid intent, send to checkout directly
+        const stored = window.localStorage.getItem("join_wanted_plan") as
+          | Exclude<Plan, "access">
+          | null;
+        if (stored) {
+          window.localStorage.removeItem("join_wanted_plan");
+          await startMembership(stored);
+          return;
+        }
+        router.replace("/offers");
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Handle intent from ?plan=member|pro and localStorage fallback
+  // If no account and there’s a plan intent, inline the email capture on that card
   useEffect(() => {
-    const qPlan = params?.get("plan") as Exclude<Plan, "access"> | null;
     const stored = (typeof window !== "undefined"
       ? window.localStorage.getItem("join_wanted_plan")
       : null) as Exclude<Plan, "access"> | null;
 
-    const intent = qPlan || stored || null;
-    if (!intent) return;
+    const plan = wanted || stored || null;
+    if (!plan) return;
 
-    if (user) {
-      // already signed in → go straight to checkout
-      void startMembership(intent);
-    } else {
-      // show inline email on the chosen card
-      setWanted(intent);
-      setInlineEmailFor(intent);
-      if (qPlan && typeof window !== "undefined") {
-        window.localStorage.setItem("join_wanted_plan", qPlan);
-      }
-      // focus email
+    if (!user) {
+      setInlineEmailFor(plan);
       setTimeout(() => emailRef.current?.focus(), 0);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params, user]);
+  }, [user, wanted]);
 
-  async function sendMagicLink(targetEmail: string) {
+  async function sendMagicLink(targetEmail: string, redirectTo = "/offers") {
     const trimmed = targetEmail.trim();
     if (!trimmed || !/^\S+@\S+\.\S+$/.test(trimmed)) {
       setInfo("Enter a valid email to get your sign-in link.");
       emailRef.current?.focus();
       return;
     }
-
-    const appUrl =
-      process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
-
     const { error: supaErr } = await supabase.auth.signInWithOtp({
       email: trimmed,
-      options: { emailRedirectTo: new URL("/offers", appUrl).toString() },
+      options: { emailRedirectTo: new URL(redirectTo, APP_URL).toString() },
     });
-
     if (supaErr) throw supaErr;
   }
 
   async function handleSendLink() {
     setInfo("");
     try {
-      await sendMagicLink(email);
+      // Access signup (free) → redirect to /offers on completion
+      await sendMagicLink(email, "/offers");
       setSent(true);
       setInfo("Check your inbox for your sign-in link.");
       track("join_free_click");
-    } catch {
-      setInfo("We couldn't send the link just now. Please try again.");
+    } catch (e) {
+      setInfo("We couldn’t send the link just now. Please try again.");
     }
   }
 
   async function choose(plan: Exclude<Plan, "access">) {
     setInfo("");
     if (!user) {
-      // No account yet → keep everything inline on the chosen card
+      // Logged out → store intent and inline email on chosen card
       setWanted(plan);
       setInlineEmailFor(plan);
-      if (typeof window !== "undefined") {
+      try {
         window.localStorage.setItem("join_wanted_plan", plan);
-      }
+      } catch {}
       setTimeout(() => emailRef.current?.focus(), 0);
       return;
     }
@@ -132,14 +166,15 @@ export default function JoinPage() {
     if (!inlineEmailFor) return;
     setInfo("");
     try {
-      await sendMagicLink(email);
+      // After sign-in, we return to /join; use localStorage to auto-continue to checkout
+      await sendMagicLink(email, "/join");
       setSent(true);
       setInfo(
-        `Check your inbox for your sign-in link. We’ll continue to ${inlineEmailFor} after you sign in.`
+        `Link sent. After you sign in, we’ll continue to ${inlineEmailFor}.`
       );
       track("join_free_click");
     } catch {
-      setInfo("We couldn't send the link just now. Please try again.");
+      setInfo("We couldn’t send the link just now. Please try again.");
     }
   }
 
@@ -160,13 +195,13 @@ export default function JoinPage() {
     accent?: "pro" | "member";
   }) {
     const isInline = inlineEmailFor === plan;
+    const accentCls =
+      accent === "pro"
+        ? "border-amber-400/30 ring-1 ring-amber-400/20"
+        : "border-neutral-800";
 
     return (
-      <div
-        className={`rounded-2xl border ${
-          accent === "pro" ? "border-amber-400/30 ring-1 ring-amber-400/20" : "border-neutral-800"
-        } bg-neutral-900 p-4`}
-      >
+      <div className={`rounded-2xl border ${accentCls} bg-neutral-900 p-4`}>
         <div className="flex items-center justify-between">
           <div className="text-lg font-semibold">{title}</div>
           <div className="text-sm text-neutral-300">{price}</div>
@@ -217,55 +252,109 @@ export default function JoinPage() {
     <Container>
       <PageHeader
         title="Join TradesCard"
-        subtitle="Start free, or pick a plan with protection, early deals and monthly rewards. Switch or cancel any time."
+        subtitle={
+          tab === "join"
+            ? "Pick a plan for protection, early deals and monthly rewards — or start free and upgrade any time."
+            : "Sign in with a magic link. No password needed."
+        }
         aside={
-          showTrialChip ? (
+          tab === "join" && shouldShowTrial(me) ? (
             <span className="promo-chip promo-chip-xs-hide">{TRIAL_COPY}</span>
           ) : undefined
         }
       />
 
-      {info && (
-        <div className="mb-4 alert alert-info">{info}</div>
-      )}
-      {error && (
-        <div className="mb-4 alert alert-error">{error}</div>
-      )}
-
-      {/* Two plans */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <PlanCard
-          plan="member"
-          title="Member"
-          price="£2.99/mo"
-          features={[
-            "Full offer access",
-            "Protect Lite benefits",
-            "Monthly prize entry",
-            "Digital card",
-          ]}
-          accent="member"
-        />
-        <PlanCard
-          plan="pro"
-          title="Pro"
-          price="£7.99/mo"
-          features={[
-            "Everything in Member",
-            "Early-access deals & Pro-only offers",
-            "Double prize entries",
-          ]}
-          accent="pro"
-        />
+      {/* Tab switcher */}
+      <div className="mb-4 inline-flex rounded-xl border border-neutral-800 p-1">
+        <button
+          onClick={() => setTab("join")}
+          className={`px-3 py-1.5 text-sm rounded-lg ${
+            tab === "join" ? "bg-neutral-800" : "hover:bg-neutral-900"
+          }`}
+        >
+          Join
+        </button>
+        <button
+          onClick={() => setTab("signin")}
+          className={`px-3 py-1.5 text-sm rounded-lg ${
+            tab === "signin" ? "bg-neutral-800" : "hover:bg-neutral-900"
+          }`}
+        >
+          Sign in
+        </button>
       </div>
 
-      {/* Join free strip (kept for people who just want Access) */}
-      <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="text-sm text-neutral-300">
-            Prefer to start free? Sign in to browse and redeem offers. Upgrade any time.
+      {/* Alerts */}
+      {info && <div className="mb-4 alert alert-info">{info}</div>}
+      {checkoutError && <div className="mb-4 alert alert-error">{checkoutError}</div>}
+
+      {tab === "join" ? (
+        <>
+          {/* Paid plans */}
+          <div className="grid gap-4 md:grid-cols-2">
+            <PlanCard
+              plan="member"
+              title="Member"
+              price="£2.99/mo"
+              features={[
+                "Full offer access",
+                "Protect Lite benefits",
+                "Monthly prize entry",
+                "Digital card",
+              ]}
+              accent="member"
+            />
+            <PlanCard
+              plan="pro"
+              title="Pro"
+              price="£7.99/mo"
+              features={[
+                "Everything in Member",
+                "Early-access deals & Pro-only offers",
+                "Double prize entries",
+              ]}
+              accent="pro"
+            />
           </div>
-          <div className="flex w-full flex-col items-stretch gap-2 md:w-auto md:flex-row">
+
+          {/* Free Access sign-up */}
+          <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="text-sm text-neutral-300">
+                Prefer to start free? Join with Access to browse and redeem offers. Upgrade any time.
+              </div>
+              <div className="flex w-full flex-col items-stretch gap-2 md:w-auto md:flex-row">
+                <input
+                  ref={emailRef}
+                  type="email"
+                  inputMode="email"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500 md:w-64"
+                />
+                <PrimaryButton onClick={handleSendLink} disabled={busy} className="text-sm">
+                  {sent ? "Link sent ✓" : "Join free"}
+                </PrimaryButton>
+              </div>
+            </div>
+            <div className="mt-2 text-xs text-neutral-500">
+              No card details needed • You’ll return to /offers after sign-in
+              {wanted && (
+                <span className="ml-2 text-neutral-400">
+                  (We’ll continue to <strong>{wanted}</strong> after you sign in)
+                </span>
+              )}
+            </div>
+          </div>
+        </>
+      ) : (
+        // Sign in tab
+        <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+          <div className="text-sm text-neutral-300">
+            Enter your email and we’ll send you a magic link.
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
             <input
               ref={emailRef}
               type="email"
@@ -273,22 +362,18 @@ export default function JoinPage() {
               placeholder="you@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500 md:w-64"
+              className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
             />
-            <PrimaryButton onClick={handleSendLink} disabled={busy} className="text-sm">
-              {sent ? "Link sent ✓" : "Join free"}
+            <PrimaryButton onClick={handleSendLink} disabled={busy}>
+              {sent ? "Link sent ✓" : "Email me a link"}
             </PrimaryButton>
           </div>
+          <p className="mt-2 text-xs text-neutral-500">
+            You’ll return to /offers after sign-in. If your link has expired or was already used,
+            request a new one.
+          </p>
         </div>
-        <div className="mt-2 text-xs text-neutral-500">
-          Cancel any time • Secure checkout • You’ll return to /join
-          {wanted && (
-            <span className="ml-2 text-neutral-400">
-              (We’ll continue to <strong>{wanted}</strong> after you sign in)
-            </span>
-          )}
-        </div>
-      </div>
+      )}
     </Container>
   );
 }
