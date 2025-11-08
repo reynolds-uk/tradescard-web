@@ -2,6 +2,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
+
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import { useMe } from "@/lib/useMe";
@@ -15,15 +18,36 @@ const TRIAL_COPY =
   process.env.NEXT_PUBLIC_TRIAL_COPY || "Try Member for £1 (90 days)";
 
 export default function JoinPage() {
+  const router = useRouter();
   const { user, tier, status, ready } = useMe();
   const next = "/join";
-  const { busy, error, joinFree, startMembership } = useJoinActions(next);
+  const { busy, error, startMembership } = useJoinActions(next);
 
+  // local state
   const [email, setEmail] = useState("");
   const [info, setInfo] = useState<string>("");
   const [sent, setSent] = useState(false);
   const [wanted, setWanted] = useState<Plan | null>(null);
   const emailRef = useRef<HTMLInputElement>(null);
+
+  // Supabase client (client-side auth flow)
+  const supabase = useMemo(
+    () =>
+      createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      ),
+    []
+  );
+
+  // If the visitor is already logged in, take them into the app
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.user) router.replace("/offers");
+    })();
+    // we intentionally run once on mount; eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Hide the trial banner for active Member/Pro
   const showTrialBanner = TRIAL_ACTIVE
@@ -48,13 +72,23 @@ export default function JoinPage() {
       emailRef.current?.focus();
       return;
     }
+
     try {
-      await joinFree(trimmed);
+      const appUrl =
+        process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
+
+      const { error: supaErr } = await supabase.auth.signInWithOtp({
+        email: trimmed,
+        options: { emailRedirectTo: new URL("/offers", appUrl).toString() },
+      });
+
+      if (supaErr) throw supaErr;
+
       setSent(true);
       setInfo("Check your inbox for your sign-in link.");
       track("join_free_click");
     } catch {
-      // joinActions already exposes an error string; nothing extra here
+      setInfo("We couldn't send the link just now. Please try again.");
     }
   }
 
@@ -121,7 +155,7 @@ export default function JoinPage() {
           <button
             onClick={() => choose("member")}
             disabled={busy}
-            className="mt-4 w-full rounded bg-amber-400 px-4 py-2 font-medium text-black hover:opacity-90 disabled:opacity-50"
+            className="mt-4 w-full rounded-xl px-4 py-2 font-medium disabled:opacity-50 btn-brand"
           >
             {TRIAL_ACTIVE ? TRIAL_COPY : "Become a Member"}
           </button>
@@ -141,7 +175,7 @@ export default function JoinPage() {
           <button
             onClick={() => choose("pro")}
             disabled={busy}
-            className="mt-4 w-full rounded border border-neutral-700 bg-neutral-900 px-4 py-2 hover:bg-neutral-800 disabled:opacity-50"
+            className="mt-4 w-full rounded-xl border border-neutral-700 bg-neutral-900 px-4 py-2 hover:bg-neutral-800 disabled:opacity-50"
           >
             Choose Pro
           </button>
@@ -167,7 +201,7 @@ export default function JoinPage() {
             <button
               onClick={handleSendLink}
               disabled={busy}
-              className="rounded bg-neutral-200 px-3 py-2 text-sm font-medium text-black hover:bg-white disabled:opacity-50"
+              className="rounded-xl px-3 py-2 text-sm font-medium disabled:opacity-50 btn-brand"
             >
               {sent ? "Link sent ✓" : "Join free"}
             </button>
