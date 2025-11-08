@@ -2,62 +2,48 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 type Props = {
   open: boolean;
   onClose: () => void;
-
-  // Callbacks (parent decides what to do; e.g. call /api/checkout with promotion hint)
   onJoinFree: () => void;
   onMember: () => Promise<void>;
   onPro: () => Promise<void>;
+  busy?: boolean;
+  error?: string;
 
-  busy?: boolean;            // external async state (checkout/portal)
-  error?: string;            // only real errors from checkout/portal
-
-  // Optional promotion / trial decoration (purely visual here)
-  trialActive?: boolean;     // e.g. process.env.NEXT_PUBLIC_TRIAL_ACTIVE === "true"
-  trialLabel?: string;       // short tag near price, e.g. "£1 for 90 days"
-  trialMessage?: ReactNode;  // longer copy above plans; accepts JSX
+  // NEW: decoration from host/hook
+  isPromo?: boolean;
+  memberPriceText?: string;
+  proPriceText?: string;
+  memberCtaText?: string;
+  proCtaText?: string;
 };
 
-function Badge({ children }: { children: ReactNode }) {
-  return (
-    <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs">{children}</span>
-  );
+function Badge({ children }: { children: string }) {
+  return <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs">{children}</span>;
 }
 
-function Notice({
-  tone = "info",
-  children,
-}: {
-  tone?: "info" | "success" | "error";
-  children: ReactNode;
-}) {
+type NoticeProps = { tone?: "info" | "success" | "error"; children: ReactNode };
+
+function Notice({ tone = "info", children }: NoticeProps) {
   const tones = {
     info: "border-amber-400/40 bg-amber-400/10 text-amber-200",
     success: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
     error: "border-red-600/40 bg-red-900/10 text-red-300",
   } as const;
-  return (
-    <div className={`mt-3 rounded border px-3 py-2 text-sm ${tones[tone]}`}>
-      {children}
-    </div>
-  );
+  return <div className={`mt-3 rounded border px-3 py-2 text-sm ${tones[tone]}`}>{children}</div>;
 }
 
 export default function JoinModal({
-  open,
-  onClose,
-  onJoinFree,
-  onMember,
-  onPro,
-  busy = false,
-  error,
-  trialActive = process.env.NEXT_PUBLIC_TRIAL_ACTIVE === "true",
-  trialLabel = process.env.NEXT_PUBLIC_TRIAL_LABEL || "Intro offer",
-  trialMessage,
+  open, onClose, onJoinFree, onMember, onPro,
+  busy = false, error,
+  isPromo = false,
+  memberPriceText = "£2.99/mo",
+  proPriceText    = "£7.99/mo",
+  memberCtaText   = "Choose Member",
+  proCtaText      = "Choose Pro",
 }: Props) {
   const supabase = useMemo<SupabaseClient | null>(() => {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -66,18 +52,13 @@ export default function JoinModal({
     return createClient(url, key);
   }, []);
 
-  // session state
   const [signedIn, setSignedIn] = useState(false);
-
-  // email / magic-link state (modal-local)
   const [email, setEmail] = useState("");
   const [sending, setSending] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [emailErr, setEmailErr] = useState<string>("");
-
   const emailRef = useRef<HTMLInputElement | null>(null);
 
-  // initialise session + prefill email from localStorage
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -86,26 +67,18 @@ export default function JoinModal({
         if (!mounted) return;
         setSignedIn(!!data?.session?.user);
       }
-      const saved =
-        typeof window !== "undefined" ? localStorage.getItem("tc:lastEmail") : null;
+      const saved = typeof window !== "undefined" ? localStorage.getItem("tc:lastEmail") : null;
       if (saved && !email) setEmail(saved);
     })();
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, [supabase, email]);
 
-  // util: validate & send magic link
   const sendMagic = async () => {
-    if (!supabase) {
-      setEmailErr("Auth initialisation failed.");
-      return;
-    }
+    if (!supabase) { setEmailErr("Auth initialisation failed."); return; }
     setEmailErr("");
     const trimmed = email.trim();
     if (!trimmed || !/^\S+@\S+\.\S+$/.test(trimmed)) {
-      setEmailErr("Enter a valid email address.");
-      return;
+      setEmailErr("Enter a valid email address."); return;
     }
     try {
       setSending(true);
@@ -126,66 +99,29 @@ export default function JoinModal({
     }
   };
 
-  // when a plan is clicked and the user isn't signed in, focus email box instead
   const ensureSignedIn = async (action: () => Promise<void>) => {
-    if (signedIn) {
-      await action();
-      return;
-    }
-    if (!sentTo) {
-      emailRef.current?.focus();
-      setEmailErr("");
-    }
+    if (signedIn) { await action(); return; }
+    if (!sentTo) { emailRef.current?.focus(); setEmailErr(""); }
   };
 
   if (!open) return null;
 
   return (
-    <div
-      aria-modal="true"
-      role="dialog"
-      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center"
-    >
-      {/* backdrop */}
-      <button
-        aria-label="Close dialog"
-        onClick={onClose}
-        className="absolute inset-0 bg-black/60"
-      />
-      {/* panel */}
+    <div aria-modal="true" role="dialog" className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center">
+      <button aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/60" />
       <div className="relative w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl border border-neutral-800 bg-neutral-900 p-4 sm:p-5">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold">Join TradesCard</h3>
-          <button
-            onClick={onClose}
-            className="rounded px-2 py-1 text-sm bg-neutral-800 hover:bg-neutral-700"
-          >
-            Close
-          </button>
+          <button onClick={onClose} className="rounded px-2 py-1 text-sm bg-neutral-800 hover:bg-neutral-700">Close</button>
         </div>
 
         <p className="mt-2 text-sm text-neutral-400">
           Pick a plan for protection, early deals and rewards — or join free and upgrade any time.
         </p>
 
-        {/* Trial / promotion banner (optional) */}
-        {trialActive && (
-          <Notice tone="info">
-            {trialMessage ?? (
-              <>
-                <strong>Intro offer:</strong> special pricing is available for new&nbsp;Members.
-                You can switch or cancel any time.
-              </>
-            )}
-          </Notice>
-        )}
-
-        {/* Email capture (visible when not signed in). Always available at the top */}
         {!signedIn && (
-          <div className="mt-3" aria-live="polite">
-            <label htmlFor="join-email" className="sr-only">
-              Email address
-            </label>
+          <div className="mt-3">
+            <label htmlFor="join-email" className="sr-only">Email address</label>
             <div className="flex gap-2">
               <input
                 id="join-email"
@@ -196,27 +132,16 @@ export default function JoinModal({
                 className="flex-1 rounded border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm"
                 inputMode="email"
                 autoComplete="email"
-                disabled={sending || busy}
               />
-              <button
-                onClick={sendMagic}
-                disabled={sending || busy}
-                className="rounded bg-neutral-200 text-neutral-900 text-sm px-3 py-2 disabled:opacity-60"
-              >
+              <button onClick={sendMagic} disabled={sending} className="rounded bg-neutral-200 text-neutral-900 text-sm px-3 py-2 disabled:opacity-60">
                 {sending ? "Sending…" : "Send sign-in link"}
               </button>
             </div>
             {emailErr && <Notice tone="error">{emailErr}</Notice>}
-            {sentTo && (
-              <Notice tone="success">
-                Magic link sent to <strong>{sentTo}</strong>. Open it on this device, then return
-                here to continue.
-              </Notice>
-            )}
-            {!emailErr && !sentTo && (
-              <Notice tone="info">
-                Enter your email to get a sign-in link. Then choose your plan.
-              </Notice>
+            {sentTo ? (
+              <Notice tone="success">Magic link sent to <strong>{sentTo}</strong>. Open it on this device, then return here to continue.</Notice>
+            ) : (
+              !emailErr && <Notice tone="info">Enter your email to get a sign-in link. Then choose your plan.</Notice>
             )}
           </div>
         )}
@@ -225,13 +150,17 @@ export default function JoinModal({
 
         <div className="mt-4 grid gap-3">
           {/* Member */}
-          <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-4">
+          <div className="relative rounded-xl border border-neutral-800 bg-neutral-900/50 p-4">
+            {isPromo && (
+              <span className="absolute right-3 -top-2 rounded bg-amber-500/20 text-amber-200 text-[11px] px-2 py-0.5 ring-1 ring-amber-400/40">
+                Intro offer
+              </span>
+            )}
             <div className="flex items-center justify-between">
-              <div className="font-medium flex items-center gap-2">
-                <span>Member</span>
-                {trialActive && <Badge>{trialLabel}</Badge>}
-              </div>
-              <div className="text-sm text-neutral-400">£2.99/mo</div>
+              <div className="font-medium">Member</div>
+              <span className={`text-sm ${isPromo ? "text-amber-300" : "text-neutral-400"}`}>
+                {memberPriceText}
+              </span>
             </div>
             <ul className="mt-2 text-sm text-neutral-300 space-y-1">
               <li>• Full offer access</li>
@@ -244,15 +173,18 @@ export default function JoinModal({
               disabled={busy}
               className="mt-3 inline-block rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm hover:bg-neutral-800 disabled:opacity-60"
             >
-              {busy ? "Opening…" : signedIn ? (trialActive ? "Start trial" : "Choose Member") : "Sign in then continue"}
+              {busy ? "Opening…" : signedIn ? memberCtaText : "Sign in then continue"}
             </button>
           </div>
 
           {/* Pro */}
-          <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-4 ring-1 ring-amber-400/30">
+          <div className="relative rounded-xl border border-amber-400/40 bg-amber-400/10 p-4 ring-1 ring-amber-400/30">
+            <span className="absolute right-3 -top-2 rounded bg-neutral-800 text-[11px] px-2 py-0.5">Best value</span>
             <div className="flex items-center justify-between">
               <div className="font-medium">Pro</div>
-              <div className="text-sm text-amber-300">£7.99/mo</div>
+              <span className={`text-sm ${isPromo ? "text-amber-300" : "text-neutral-400"}`}>
+                {proPriceText}
+              </span>
             </div>
             <ul className="mt-2 text-sm text-neutral-200 space-y-1">
               <li>• Everything in Member</li>
@@ -264,7 +196,7 @@ export default function JoinModal({
               disabled={busy}
               className="mt-3 inline-block rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm hover:bg-neutral-800 disabled:opacity-60"
             >
-              {busy ? "Opening…" : signedIn ? "Choose Pro" : "Sign in then continue"}
+              {busy ? "Opening…" : signedIn ? proCtaText : "Sign in then continue"}
             </button>
           </div>
 
@@ -279,8 +211,7 @@ export default function JoinModal({
             </p>
             <button
               onClick={() => (signedIn ? onJoinFree() : sendMagic())}
-              disabled={busy || sending}
-              className="mt-3 inline-block rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm hover:bg-neutral-800 disabled:opacity-60"
+              className="mt-3 inline-block rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm hover:bg-neutral-800"
             >
               {signedIn ? "Continue free" : sending ? "Sending…" : "Sign in / Join free"}
             </button>
@@ -288,7 +219,7 @@ export default function JoinModal({
         </div>
 
         <div className="mt-4 text-[12px] text-neutral-500">
-          No purchase necessary. A free postal entry route is available on public promo pages.
+          No purchase necessary. Free postal entry route is available on public promo pages.
           Paid and free routes are treated equally in draws.
         </div>
       </div>

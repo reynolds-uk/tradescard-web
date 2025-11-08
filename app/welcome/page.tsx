@@ -1,3 +1,4 @@
+// app/welcome/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -33,7 +34,7 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://tradescard-api.vercel.app";
 
-// --- Trial flags (match Account page)
+// Trial flags (kept in sync with Account page)
 const TRIAL = process.env.NEXT_PUBLIC_TRIAL_ACTIVE === "true";
 const TRIAL_COPY = process.env.NEXT_PUBLIC_TRIAL_COPY || "Try Member for £1 (90 days)";
 
@@ -73,15 +74,15 @@ export default function WelcomePage() {
   useEffect(() => {
     track("welcome_view");
 
+    let aborted = false;
     (async () => {
       try {
         setErr("");
-
         const { data } = await supabase.auth.getSession();
         const user = data?.session?.user ?? null;
 
         if (!user) {
-          setMe(null);
+          if (!aborted) setMe(null);
           return;
         }
 
@@ -95,17 +96,23 @@ export default function WelcomePage() {
         const tier = ((a.members?.tier as Tier) ?? "access") as Tier;
         const status = a.members?.status ?? (tier === "access" ? "free" : "inactive");
 
-        setMe({
-          user_id: a.user_id,
-          email: a.email,
-          full_name: a.full_name ?? null,
-          tier,
-          status,
-        });
+        if (!aborted) {
+          setMe({
+            user_id: a.user_id,
+            email: a.email,
+            full_name: a.full_name ?? null,
+            tier,
+            status,
+          });
+        }
       } catch (e) {
-        setErr(e instanceof Error ? e.message : "Something went wrong");
+        if (!aborted) setErr(e instanceof Error ? e.message : "Something went wrong");
       }
     })();
+
+    return () => {
+      aborted = true;
+    };
   }, [supabase]);
 
   const copyCardId = async () => {
@@ -123,8 +130,6 @@ export default function WelcomePage() {
   const tier = me?.tier ?? "access";
   const cardLabel = me ? TIER_COPY[tier].label : "ACCESS";
   const blurb = me ? TIER_COPY[tier].blurb : TIER_COPY.access.blurb;
-
-  // Trial-aware CTA text for Access users
   const accessCta = TRIAL ? TRIAL_COPY : "Become a Member (£2.99/mo)";
 
   return (
@@ -204,7 +209,6 @@ export default function WelcomePage() {
                 <button
                   onClick={() => {
                     track("welcome_cta_join_member", { trial: TRIAL });
-                    // Open unified modal with intent "member"
                     openJoin("member");
                   }}
                   className="block w-full rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 text-center hover:bg-neutral-800"
@@ -227,13 +231,13 @@ export default function WelcomePage() {
         </div>
       </div>
 
-      {/* Soft reminder for ACCESS users */}
+      {/* Access upsell */}
       {tier === "access" && (
         <div className="mt-6 rounded-xl border border-amber-400/30 bg-amber-400/10 p-4">
           <div className="font-medium mb-1">Unlock more with membership</div>
           <p className="text-sm text-neutral-200">
-            Upgrade to <span className="font-semibold">Member</span> for core protection and monthly
-            rewards, or go <span className="font-semibold">Pro</span> for even more.
+            Upgrade to <span className="font-semibold">Member</span> for core protection and
+            monthly rewards, or go <span className="font-semibold">Pro</span> for even more.
           </p>
           <button
             onClick={() => {

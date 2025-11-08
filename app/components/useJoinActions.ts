@@ -1,126 +1,93 @@
+// app/components/useJoinActions.ts
 "use client";
 
 import { useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-export type Billing = "monthly" | "annual";
+type Plan = "member" | "pro";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_API_BASE ||
-  "https://tradescard-api.vercel.app";
-
-type SessionUser = { id: string; email: string };
-
-type CheckoutResponse = {
-  url?: string;
-  error?: string;
+type StartOpts = {
+  /** Where to return after checkout success */
+  next?: string;
+  /** Optional promo hint for the API → choose Stripe price */
+  promo?: string | null;
 };
 
-function getSiteOrigin(): string {
-  const env = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
-  if (env) return env;
-  if (typeof window !== "undefined") return window.location.origin;
-  return ""; // SSR fallback (won’t be used client-side)
-}
-
-export function useJoinActions(next: string = "/") {
+export function useJoinActions(next: string = "/welcome") {
   const supabase = useMemo(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
+    () => createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    ),
     []
   );
 
+  // Feature flag: £1 for 90 days (set NEXT_PUBLIC_FEATURE_PROMO_1GBP=1)
+  const isPromo = process.env.NEXT_PUBLIC_FEATURE_PROMO_1GBP === "1";
+  const promoHint = isPromo ? "1gbp90d" : null;
+
+  // Presentation (centralised so UI stays consistent)
+  const memberPriceText = isPromo ? "£1 for 90 days, then £2.99/mo" : "£2.99/mo";
+  const proPriceText    = isPromo ? "£1 for 90 days, then £7.99/mo" : "£7.99/mo";
+  const memberCtaText   = isPromo ? "Choose Member – £1/90d" : "Choose Member";
+  const proCtaText      = isPromo ? "Choose Pro – £1/90d"    : "Choose Pro";
+
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<string>("");
 
-  async function requireSession(): Promise<SessionUser | null> {
+  async function currentUser() {
     const { data } = await supabase.auth.getSession();
-    const u = data?.session?.user ?? null;
-    if (!u) return null;
-    return { id: u.id, email: u.email ?? "" };
-    }
-
-  /**
-   * Try to send a magic link using the last stored email (saved by the modal/header).
-   * Returns true if we attempted to send; false if no email was available.
-   * Intentionally does NOT set an error on success — the modal handles user messaging.
-   */
-  async function sendMagicLinkIfEmailSaved(): Promise<boolean> {
-    if (typeof window === "undefined") return false;
-    const saved = localStorage.getItem("tc:lastEmail");
-    if (!saved) return false;
-
-    const base = getSiteOrigin();
-    const { error } = await supabase.auth.signInWithOtp({
-      email: saved,
-      options: { emailRedirectTo: `${base}/auth/callback?next=${encodeURIComponent(next)}` },
-    });
-    if (error) {
-      // This is a real failure we should surface.
-      setError(error.message || "Failed to send sign-in link.");
-    }
-    return true;
+    return data?.session?.user ?? null;
   }
 
-  async function startMembership(
-    plan: "member" | "pro",
-    billing: Billing = "monthly"
-  ): Promise<void> {
+  async function startMembership(plan: Plan, opts: StartOpts = {}) {
     try {
       setBusy(true);
       setError("");
 
-      const u = await requireSession();
-      if (!u) {
-        // Not signed in: best effort to send link (modal will show UI messages)
-        await sendMagicLinkIfEmailSaved();
-        return;
-      }
+      const user = await currentUser();
+      if (!user) throw new Error("Not signed in");
 
-      const res = await fetch(`${API_BASE}/api/checkout`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: u.id, email: u.email, plan, billing, next }),
-      });
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE || "https://tradescard-api.vercel.app"}/api/checkout`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user_id: user.id,
+            email: user.email,
+            plan,
+            promo: opts.promo ?? promoHint,   // 👈 pass promo hint to API
+            next:  opts.next  ?? next,         // 👈 optional post-checkout return
+          }),
+          keepalive: true,
+        }
+      );
 
-      const json = (await res.json().catch(() => ({}))) as CheckoutResponse;
-      if (!res.ok || !json.url) {
-        throw new Error(json.error || `Checkout failed (${res.status})`);
-      }
+      const json = await res.json().catch(() => ({} as { url?: string; error?: string }));
+      if (!res.ok || !json.url) throw new Error(json?.error || "Checkout failed");
       window.location.href = json.url;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Could not start checkout.";
-      setError(msg);
+      setError(e instanceof Error ? e.message : "Could not start checkout");
     } finally {
       setBusy(false);
     }
   }
 
-  async function joinFree(): Promise<void> {
-    try {
-      setBusy(true);
-      setError("");
-
-      const u = await requireSession();
-      if (!u) {
-        // Not signed in: best effort to send link (modal will show UI messages)
-        await sendMagicLinkIfEmailSaved();
-        return;
-      }
-
-      // Signed in → just continue to public catalogue (or member area if you prefer)
-      window.location.href = "/offers";
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Could not continue.";
-      setError(msg);
-    } finally {
-      setBusy(false);
-    }
+  async function joinFree(opts: { next?: string } = {}) {
+    // For free join, we simply bounce to /welcome (or provided `next`)
+    window.location.href = opts.next ?? next;
   }
 
-  return { busy, error, startMembership, joinFree };
+  return {
+    isPromo,
+    memberPriceText,
+    proPriceText,
+    memberCtaText,
+    proCtaText,
+    busy,
+    error,
+    startMembership,
+    joinFree,
+  };
 }

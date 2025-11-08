@@ -17,11 +17,10 @@
 
     "baseUrl": ".",
     "paths": {
-      "@/*": ["app/*", "src/*"],            // root alias: prefer app/, also allow src/ if present
+      "@/*": ["app/*"],
       "@/app/*": ["app/*"],
       "@/components/*": ["app/components/*"],
-      "@/lib/*": ["app/lib/*"],             // <-- FIX: points to app/lib/*
-      "@/src/*": ["src/*"]                  // only if you actually use /src
+      "@/lib/*": ["app/lib/*"]
     },
 
     "types": ["node"],

@@ -16,6 +16,11 @@ const API_BASE =
 
 type Tier = "access" | "member" | "pro";
 
+// Optional intro offer (e.g. £1 for 90 days)
+const TRIAL = process.env.NEXT_PUBLIC_TRIAL_ACTIVE === "true";
+const TRIAL_COPY =
+  process.env.NEXT_PUBLIC_TRIAL_COPY || "Unlock everything — try Member for £1 (90 days)";
+
 export default function OffersPage() {
   // Supabase (client)
   const supabase = useMemo(
@@ -48,7 +53,7 @@ export default function OffersPage() {
         setLoading(true);
         setFetchErr("");
 
-        // session → account
+        // session → account (to know gating state)
         const { data } = await supabase.auth.getSession();
         const user = data?.session?.user ?? null;
 
@@ -58,7 +63,9 @@ export default function OffersPage() {
             { cache: "no-store" }
           );
           if (r.ok) {
-            const j = await r.json();
+            const j = (await r.json()) as {
+              members?: { tier?: Tier; status?: string } | null;
+            };
             if (!aborted) {
               setMe({
                 tier: ((j?.members?.tier as Tier) ?? "access") as Tier,
@@ -72,15 +79,16 @@ export default function OffersPage() {
           setMe(null);
         }
 
-        // catalogue (public-facing list; redemption is gated)
+        // catalogue (public list; redemption is still gated)
         const res = await fetch(`${API_BASE}/api/offers?visibility=access`, {
           cache: "no-store",
         });
-        const dataList = await res.json().catch(() => []);
+        if (!res.ok) throw new Error(`Offers failed: ${res.status}`);
+        const dataList = (await res.json()) as unknown;
         if (!aborted) {
           setItems(Array.isArray(dataList) ? (dataList as Offer[]) : []);
         }
-      } catch (e: unknown) {
+      } catch (e) {
         if (!aborted) {
           setFetchErr(
             e instanceof Error ? e.message : "Failed to load offers. Please try again."
@@ -121,11 +129,43 @@ export default function OffersPage() {
       <PageHeader
         title="Offers"
         subtitle="Curated savings for the trade. Join to unlock the full catalogue."
+        aside={
+          TRIAL ? (
+            <span className="hidden sm:inline rounded bg-amber-400/20 text-amber-200 text-xs px-2 py-1 border border-amber-400/30">
+              {TRIAL_COPY}
+            </span>
+          ) : undefined
+        }
       />
 
       {fetchErr && (
         <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300 text-sm">
           {fetchErr}
+        </div>
+      )}
+
+      {/* Upgrade nudge for ACCESS / inactive users */}
+      {!isEligible && (
+        <div className="mb-4 rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm text-neutral-300">
+              Sign in and upgrade to unlock member-only redemptions.
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setJoinOpen(true)}
+                className="rounded-lg bg-amber-400 text-black px-3 py-1.5 text-sm font-medium hover:opacity-90"
+              >
+                {TRIAL ? TRIAL_COPY : "Unlock full access"}
+              </button>
+              <button
+                onClick={() => setJoinOpen(true)}
+                className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm hover:bg-neutral-800"
+              >
+                Join free
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -145,7 +185,16 @@ export default function OffersPage() {
               No offers available right now. Please check back soon.
             </div>
           ) : (
-            items.map((o) => <OfferCard key={o.id} offer={o} onRedeem={() => redeem(o)} />)
+            items.map((o) => (
+              <OfferCard
+                key={o.id}
+                offer={o}
+                onRedeem={() => redeem(o)}
+                // Optional: grey out CTA when ineligible
+                disabled={!isEligible}
+                ctaLabel={!isEligible ? (TRIAL ? TRIAL_COPY : "Join to redeem") : undefined}
+              />
+            ))
           )}
         </div>
       )}

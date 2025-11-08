@@ -1,6 +1,8 @@
 // app/components/OfferCard.tsx
 "use client";
 
+import { useMemo } from "react";
+
 type Visibility = "access" | "member" | "pro";
 
 export type Offer = {
@@ -18,8 +20,14 @@ export type Offer = {
 
 type Props = {
   offer: Offer;
-  locked?: boolean;                        // if true, show “Join/Upgrade” CTA
-  onRedeem?: (offer: Offer) => void;       // click handler
+  onRedeem?: (offer: Offer) => void;
+
+  /** New props used by /offers */
+  disabled?: boolean;
+  ctaLabel?: string;
+
+  /** Legacy prop (kept for compatibility). If provided, maps to disabled. */
+  locked?: boolean;
 };
 
 function Pill({ children }: { children: React.ReactNode }) {
@@ -30,11 +38,27 @@ function Pill({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function OfferCard({ offer, locked = false, onRedeem }: Props) {
+function formatDate(iso?: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString();
+}
+
+export function OfferCard({ offer, onRedeem, disabled, ctaLabel, locked }: Props) {
+  // Back-compat: if "locked" is provided, use it unless "disabled" is explicitly set
+  const isDisabled = useMemo(() => {
+    if (typeof disabled === "boolean") return disabled;
+    return !!locked;
+  }, [disabled, locked]);
+
+  const start = formatDate(offer.starts_at);
+  const end = formatDate(offer.ends_at);
+
   const handleClick = () => {
-    if (locked) {
-      // send to join/upgrade; adjust route as needed
-      window.location.href = "/join";
+    if (isDisabled) {
+      // Let the parent decide how to gate; default to /join for legacy use
+      if (!onRedeem) window.location.href = "/join";
       return;
     }
     if (onRedeem) {
@@ -51,12 +75,12 @@ export function OfferCard({ offer, locked = false, onRedeem }: Props) {
   return (
     <div
       className={`rounded-2xl border p-5 transition ${
-        locked
+        isDisabled
           ? "border-neutral-800 bg-neutral-950/60"
           : "border-neutral-800 bg-neutral-900 hover:bg-neutral-800"
       }`}
     >
-      <div className="mb-2 flex items-center justify-between">
+      <div className="mb-2 flex items-center justify-between gap-2">
         <Pill>{offer.category}</Pill>
         {offer.visibility && (
           <span className="rounded bg-neutral-900 px-2 py-0.5 text-[11px]">
@@ -66,20 +90,30 @@ export function OfferCard({ offer, locked = false, onRedeem }: Props) {
       </div>
 
       <div className="text-base font-semibold">{offer.title}</div>
+
       {offer.partner && (
         <div className="mt-1 text-sm text-neutral-400">{offer.partner}</div>
+      )}
+
+      {/* Optional validity window */}
+      {(start || end) && (
+        <div className="mt-1 text-[12px] text-neutral-500">
+          {start && end && <>Valid {start} – {end}</>}
+          {start && !end && <>Starts {start}</>}
+          {!start && end && <>Ends {end}</>}
+        </div>
       )}
 
       <div className="mt-4">
         <button
           onClick={handleClick}
           className={`rounded-lg px-3 py-1.5 text-sm ${
-            locked
+            isDisabled
               ? "bg-neutral-800 text-neutral-400"
               : "bg-amber-400 text-black hover:bg-amber-300"
           }`}
         >
-          {locked ? "Join to unlock" : "Get offer"}
+          {isDisabled ? ctaLabel ?? "Join to redeem" : "Get offer"}
         </button>
       </div>
     </div>

@@ -1,3 +1,4 @@
+// app/account/page.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -45,7 +46,7 @@ const TIER_COPY: Record<Tier, { label: string; boost: string; priceShort: string
   pro: { label: "PRO", boost: "1.50×", priceShort: "£7.99" },
 };
 
-// ---- Trial toggle (for £1 / 90-day etc.)
+// ---- Intro offer flag (e.g. £1 / 90-day)
 const TRIAL = process.env.NEXT_PUBLIC_TRIAL_ACTIVE === "true";
 const TRIAL_COPY = process.env.NEXT_PUBLIC_TRIAL_COPY || "Try Member for £1 (90 days)";
 
@@ -67,7 +68,11 @@ function Badge({
 
 export default function AccountPage() {
   const supabase = useMemo(
-    () => createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!),
+    () =>
+      createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      ),
     []
   );
   const { openJoin } = useJoinModal();
@@ -110,10 +115,10 @@ export default function AccountPage() {
     }
 
     // Account
-    const accRes = await fetch(`${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`, {
-      cache: "no-store",
-      signal: abortRef.current.signal,
-    });
+    const accRes = await fetch(
+      `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
+      { cache: "no-store", signal: abortRef.current.signal }
+    );
     if (!accRes.ok) throw new Error(`/api/account failed: ${accRes.status}`);
     const acc: ApiAccount = await accRes.json();
     setMe(mapToMe(acc, (user as { created_at?: string }).created_at ?? null));
@@ -141,10 +146,14 @@ export default function AccountPage() {
         // Clean noisy params (Stripe/auth)
         try {
           const url = new URL(window.location.href);
-          if (["status", "success", "canceled", "auth_error"].some((k) => url.searchParams.has(k))) {
+          if (["status", "success", "canceled", "auth_error"].some((k) =>
+            url.searchParams.has(k)
+          )) {
             window.history.replaceState({}, "", url.pathname + url.hash);
           }
-        } catch {/* no-op */}
+        } catch {
+          /* no-op */
+        }
         await fetchEverything();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Something went wrong");
@@ -181,8 +190,14 @@ export default function AccountPage() {
       const res = await fetch(`${API_BASE}/api/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // ---- pass trial hint so the API can swap Stripe prices
-        body: JSON.stringify({ user_id: user.id, email: user.email, plan, trial: TRIAL }),
+        // Pass intro-offer hint so the API can select the correct Stripe price
+        body: JSON.stringify({
+          user_id: user.id,
+          email: user.email,
+          plan,
+          trial: TRIAL,
+          next: "/welcome",
+        }),
         keepalive: true,
       });
       const json = await res.json().catch(() => ({} as { url?: string; error?: string }));
