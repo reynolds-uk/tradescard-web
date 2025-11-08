@@ -14,14 +14,16 @@
     "incremental": true,
     "forceConsistentCasingInFileNames": true,
     "allowJs": true,
+
     "baseUrl": ".",
     "paths": {
-      "@/*": ["*"],
+      "@/*": ["app/*", "src/*"],            // root alias: prefer app/, also allow src/ if present
       "@/app/*": ["app/*"],
       "@/components/*": ["app/components/*"],
-      "@/lib/*": ["app/src/lib/*"],         // delete if you don’t have this
-      "@/src/*": ["app/src/*"]              // delete if you don’t have this
+      "@/lib/*": ["app/lib/*"],             // <-- FIX: points to app/lib/*
+      "@/src/*": ["src/*"]                  // only if you actually use /src
     },
+
     "types": ["node"],
     "plugins": [{ "name": "next" }]
   },
