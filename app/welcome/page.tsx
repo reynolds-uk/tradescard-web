@@ -1,42 +1,15 @@
 // app/welcome/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { useState } from "react";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import { useJoinModal } from "@/components/JoinModalContext";
 import { track } from "@/lib/track";
+import { useMe } from "@/lib/useMe";
+import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 
 type Tier = "access" | "member" | "pro";
-
-type ApiAccount = {
-  user_id: string;
-  email: string;
-  full_name?: string | null;
-  members: null | {
-    status: "active" | "trialing" | "past_due" | "canceled" | "free" | string;
-    tier: Tier | string;
-    current_period_end: string | null;
-  };
-};
-
-type Me = {
-  user_id: string;
-  email: string;
-  full_name?: string | null;
-  tier: Tier;
-  status: string;
-};
-
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_API_BASE ||
-  "https://tradescard-api.vercel.app";
-
-// Trial flags (kept in sync with Account page)
-const TRIAL = process.env.NEXT_PUBLIC_TRIAL_ACTIVE === "true";
-const TRIAL_COPY = process.env.NEXT_PUBLIC_TRIAL_COPY || "Try Member for £1 (90 days)";
 
 const TIER_COPY: Record<Tier, { label: string; blurb: string }> = {
   access: {
@@ -57,80 +30,29 @@ const TIER_COPY: Record<Tier, { label: string; blurb: string }> = {
 };
 
 export default function WelcomePage() {
-  const supabase = useMemo(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
-    []
-  );
   const { openJoin } = useJoinModal();
+  const me = useMe(); // { user_id, email, full_name, tier, status } | null
 
-  const [me, setMe] = useState<Me | null>(null);
+  const tier: Tier = (me?.tier as Tier) ?? "access";
+  const cardLabel = TIER_COPY[tier].label;
+  const blurb = TIER_COPY[tier].blurb;
+
+  const showTrial = shouldShowTrial(me);
+  const accessCta = showTrial ? TRIAL_COPY : "Become a Member (£2.99/mo)";
+
   const [copyOk, setCopyOk] = useState(false);
-  const [err, setErr] = useState("");
-
-  useEffect(() => {
-    track("welcome_view");
-
-    let aborted = false;
-    (async () => {
-      try {
-        setErr("");
-        const { data } = await supabase.auth.getSession();
-        const user = data?.session?.user ?? null;
-
-        if (!user) {
-          if (!aborted) setMe(null);
-          return;
-        }
-
-        const r = await fetch(
-          `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
-          { cache: "no-store" }
-        );
-        if (!r.ok) throw new Error(`/api/account ${r.status}`);
-
-        const a: ApiAccount = await r.json();
-        const tier = ((a.members?.tier as Tier) ?? "access") as Tier;
-        const status = a.members?.status ?? (tier === "access" ? "free" : "inactive");
-
-        if (!aborted) {
-          setMe({
-            user_id: a.user_id,
-            email: a.email,
-            full_name: a.full_name ?? null,
-            tier,
-            status,
-          });
-        }
-      } catch (e) {
-        if (!aborted) setErr(e instanceof Error ? e.message : "Something went wrong");
-      }
-    })();
-
-    return () => {
-      aborted = true;
-    };
-  }, [supabase]);
 
   const copyCardId = async () => {
-    if (!me) return;
+    if (!me?.user_id) return;
     try {
       await navigator.clipboard.writeText(me.user_id);
       setCopyOk(true);
-      track("welcome_copy_card", { tier: me.tier });
+      track("welcome_copy_card", { tier });
       setTimeout(() => setCopyOk(false), 1500);
     } catch {
-      /* ignore */
+      /* no-op */
     }
   };
-
-  const tier = me?.tier ?? "access";
-  const cardLabel = me ? TIER_COPY[tier].label : "ACCESS";
-  const blurb = me ? TIER_COPY[tier].blurb : TIER_COPY.access.blurb;
-  const accessCta = TRIAL ? TRIAL_COPY : "Become a Member (£2.99/mo)";
 
   return (
     <Container>
@@ -139,15 +61,10 @@ export default function WelcomePage() {
         subtitle="Here’s your card and the quickest next steps to start getting value."
       />
 
-      {TRIAL && (
+      {/* Trial ribbon only for eligible users (not Members/Pro) */}
+      {showTrial && (
         <div className="mb-4 rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-200">
           Limited-time offer: {TRIAL_COPY}
-        </div>
-      )}
-
-      {err && (
-        <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 p-3 text-red-300">
-          {err}
         </div>
       )}
 
@@ -175,7 +92,7 @@ export default function WelcomePage() {
                 <button
                   onClick={copyCardId}
                   className="rounded bg-neutral-800 px-3 py-1 text-sm hover:bg-neutral-700"
-                  disabled={!me}
+                  disabled={!me?.user_id}
                 >
                   {copyOk ? "Copied ✓" : "Copy ID"}
                 </button>
@@ -208,7 +125,7 @@ export default function WelcomePage() {
               ) : (
                 <button
                   onClick={() => {
-                    track("welcome_cta_join_member", { trial: TRIAL });
+                    track("welcome_cta_join_member", { trial: showTrial });
                     openJoin("member");
                   }}
                   className="block w-full rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 text-center hover:bg-neutral-800"
@@ -231,7 +148,7 @@ export default function WelcomePage() {
         </div>
       </div>
 
-      {/* Access upsell */}
+      {/* Access upsell (hidden for Members/Pro) */}
       {tier === "access" && (
         <div className="mt-6 rounded-xl border border-amber-400/30 bg-amber-400/10 p-4">
           <div className="font-medium mb-1">Unlock more with membership</div>
@@ -241,7 +158,7 @@ export default function WelcomePage() {
           </p>
           <button
             onClick={() => {
-              track("welcome_cta_join_member_banner", { trial: TRIAL });
+              track("welcome_cta_join_member_banner", { trial: showTrial });
               openJoin("member");
             }}
             className="mt-3 inline-block rounded bg-amber-400 text-black px-4 py-2 font-medium"
