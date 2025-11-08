@@ -4,17 +4,30 @@
 import Link from "next/link";
 import { useMemo } from "react";
 import { useMe } from "@/lib/useMe";
-import { TRIAL_ACTIVE, TRIAL_COPY } from "@/lib/trial";
 import { routeToJoin } from "@/lib/routeToJoin";
+import { TRIAL_ACTIVE, TRIAL_COPY } from "@/lib/trial";
 
 export default function Nav() {
-  const { user, tier, status, ready } = useMe();
-
+  const me = useMe();
   const showTrialChip = useMemo(() => {
     if (!TRIAL_ACTIVE) return false;
-    if (!user) return true; // logged out still sees the chip
-    return !(status === "active" && (tier === "member" || tier === "pro"));
-  }, [user, tier, status]);
+    if (!me?.user) return true;
+    return !(me.status === "active" && (me.tier === "member" || me.tier === "pro"));
+  }, [me]);
+
+  const goSignInOrJoin = () => {
+    if (typeof window === "undefined") return;
+    if (window.location.pathname === "/join") {
+      // already on /join – focus the email box
+      const el = document.getElementById("join-email") as HTMLInputElement | null;
+      if (el) {
+        el.focus();
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+    }
+    window.location.href = routeToJoin("access");
+  };
 
   return (
     <nav className="sticky top-0 z-40 border-b border-neutral-900 bg-neutral-950/80 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/60">
@@ -33,28 +46,28 @@ export default function Nav() {
         </div>
 
         <div className="flex items-center gap-2">
-          {ready && user ? (
+          {me?.user ? (
             <>
-              {tier !== "pro" && status !== "canceled" && (
-                <button
-                  onClick={() => routeToJoin("pro")}
+              {me.tier !== "pro" && me.status !== "canceled" && (
+                <Link
+                  href="/account#upgrade"
                   className="rounded bg-neutral-900 px-3 py-1 text-sm hover:bg-neutral-800"
-                  title={`You're ${tier}. Upgrade to Pro.`}
+                  title={`You're ${me.tier}. Upgrade to Pro.`}
                 >
                   Upgrade
-                </button>
+                </Link>
               )}
               <Link
                 href="/account"
                 className="rounded bg-amber-400 px-3 py-1 text-sm font-medium text-black hover:opacity-90"
-                title={`Signed in as ${user.email ?? ""}`}
+                title={`Signed in as ${me.email}`}
               >
                 Account
               </Link>
             </>
           ) : (
             <button
-              onClick={() => routeToJoin("member")}
+              onClick={goSignInOrJoin}
               className="rounded bg-amber-400 px-3 py-1 text-sm font-medium text-black hover:opacity-90"
             >
               Sign in / Join
