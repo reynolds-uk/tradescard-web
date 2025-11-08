@@ -8,7 +8,7 @@ export type TrackEvent =
   | "welcome_cta_join_member"
   | "offers_nudge_upgrade_click"
   | "offer_click"
-  // NEW: join-page specific
+  | "offers_nudge_join_free_click"   // ← add this
   | "join_member_click"
   | "join_pro_click"
   | "join_free_click";
