@@ -7,6 +7,7 @@ import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import PrimaryButton from "@/components/PrimaryButton";
 import { useMe } from "@/lib/useMe";
+import { useMeReady } from "@/lib/useMeReady";
 import { routeToJoin } from "@/lib/routeToJoin";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 
@@ -66,7 +67,8 @@ function Badge({
 }
 
 export default function AccountPage() {
-  const me = useMe(); // { user?, email?, tier, status, ready }
+  const me = useMe();                 // { user?, email?, tier, status, ready? }
+  const ready = useMeReady(me);       // guard to stop logged-out ➜ in flicker
   const showTrial = shouldShowTrial(me);
 
   // Supabase only for signOut()
@@ -137,22 +139,23 @@ export default function AccountPage() {
   }
 
   useEffect(() => {
+    if (!ready) return; // wait until auth state is known
+
     (async () => {
       try {
         setLoading(true);
+
         // Clean noisy params (Stripe/auth)
         try {
           const url = new URL(window.location.href);
-          if (
-            ["status", "success", "canceled", "auth_error"].some((k) =>
-              url.searchParams.has(k)
-            )
-          ) {
+          const keys = ["status", "success", "canceled", "auth_error", "error", "error_code"];
+          if (keys.some((k) => url.searchParams.has(k))) {
             window.history.replaceState({}, "", url.pathname + url.hash);
           }
         } catch {
           /* no-op */
         }
+
         await fetchEverything();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Something went wrong");
@@ -163,7 +166,7 @@ export default function AccountPage() {
 
     return () => abortRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [me?.user?.id]);
+  }, [ready, me?.user?.id]);
 
   // Spotlight actions if arriving from an upgrade path
   useEffect(() => {
@@ -192,6 +195,7 @@ export default function AccountPage() {
           user_id: me.user.id,
           email: me.email,
           plan,
+          // hint to API: pick intro price if configured/eligible
           trial: showTrial,
           next: "/welcome",
         }),
@@ -212,7 +216,7 @@ export default function AccountPage() {
       setBusy(true);
       setError("");
       if (!me?.user) {
-        window.location.href = "/join";
+        routeToJoin(); // ask user to sign in
         return;
       }
       const res = await fetch(`${API_BASE}/api/stripe/portal`, {
@@ -278,37 +282,52 @@ export default function AccountPage() {
         title="My Account"
         subtitle="Manage your membership, card, billing and rewards eligibility."
         aside={
-          <button
-            onClick={refresh}
-            className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800 disabled:opacity-60"
-            disabled={loading}
-          >
-            {loading ? "Refreshing…" : "Refresh"}
-          </button>
+          ready ? (
+            <button
+              onClick={refresh}
+              className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800 disabled:opacity-60"
+              disabled={loading}
+            >
+              {loading ? "Refreshing…" : "Refresh"}
+            </button>
+          ) : null
         }
       />
 
-      {error && (
+      {/* Initial skeleton to prevent flicker */}
+      {!ready && (
+        <div className="rounded-xl border border-neutral-800 p-5 bg-neutral-900/60 animate-pulse h-40" />
+      )}
+
+      {error && ready && (
         <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300">
           {error}
         </div>
       )}
 
       {/* Logged out */}
-      {!loading && !view && (
+      {ready && !loading && !view && (
         <div className="rounded-xl border border-neutral-800 p-5 bg-neutral-900/60">
           <p className="font-medium mb-2">You’re not signed in.</p>
           <p className="text-neutral-400 mb-3">
             Use your email to get a magic sign-in link. No password needed.
           </p>
-          <PrimaryButton onClick={() => routeToJoin("member")}>
-             Sign in / Join
-           </PrimaryButton>
+          <div className="flex gap-2">
+            <button
+              onClick={() => routeToJoin()}
+              className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
+            >
+              Join free
+            </button>
+            <PrimaryButton onClick={() => routeToJoin("member")}>
+              {showTrial ? TRIAL_COPY : "Become a Member"}
+            </PrimaryButton>
+          </div>
         </div>
       )}
 
       {/* Logged in */}
-      {!loading && view && (
+      {ready && !loading && view && (
         <div className="space-y-6">
           {/* Status cues */}
           {view.status === "past_due" && (

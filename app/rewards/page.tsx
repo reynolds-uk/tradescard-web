@@ -6,6 +6,7 @@ import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import PrimaryButton from "@/components/PrimaryButton";
 import { useMe } from "@/lib/useMe";
+import { useMeReady } from "@/lib/useMeReady";
 import { routeToJoin } from "@/lib/routeToJoin";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 
@@ -51,14 +52,14 @@ function StatCard({
 }
 
 export default function RewardsPage() {
-  const me = useMe(); // { user?, email?, tier, status, ready }
-  const isSignedIn = !!me?.user;
-  const tier = (me?.tier as Tier) ?? "access";
+  const me = useMe();                   // { user?, email?, tier, status, ready? }
+  const ready = useMeReady(me);         // prevents flicker before auth state resolves
+  const tier: Tier = (me?.tier as Tier) ?? "access";
   const status = me?.status ?? "free";
-  const isPaidActive =
-    (status === "active" || status === "trialing") &&
-    (tier === "member" || tier === "pro");
-  const showExplainer = !isPaidActive;
+  const isSignedIn = !!me?.user;
+  const isPaidTier = tier === "member" || tier === "pro";
+  const isPaidActive = isPaidTier && (status === "active" || status === "trialing");
+  const showExplainer = !isPaidActive;  // access / logged-out / inactive
   const showTrial = shouldShowTrial(me);
 
   const [loading, setLoading] = useState(true);
@@ -67,10 +68,12 @@ export default function RewardsPage() {
   const [pointsThisMonth, setPointsThisMonth] = useState(0);
   const [lifetimePoints, setLifetimePoints] = useState(0);
 
-  const drawCutoff = endOfThisMonthLocal().toLocaleString();
+  const drawCutoff = endOfThisMonthLocal().toLocaleDateString();
 
-  // Load rewards summary for signed-in users; stats are meaningful for paid tiers
+  // Load rewards summary (only once we know whether we’re signed in)
   useEffect(() => {
+    if (!ready) return;
+
     let aborted = false;
 
     async function load() {
@@ -103,51 +106,46 @@ export default function RewardsPage() {
           );
         }
       } catch (e) {
-        if (!aborted) {
-          setErr(e instanceof Error ? e.message : "Something went wrong");
-        }
+        if (!aborted) setErr(e instanceof Error ? e.message : "Something went wrong");
       } finally {
         if (!aborted) setLoading(false);
       }
     }
 
-    // Clean redirect params (optional)
+    // Clean noisy params from magic-link / checkout redirects
     try {
       const url = new URL(window.location.href);
-      if (
-        url.searchParams.has("status") ||
-        url.searchParams.has("success") ||
-        url.searchParams.has("canceled") ||
-        url.searchParams.has("auth_error")
-      ) {
-        window.history.replaceState({}, "", url.pathname);
+      const keys = ["status", "success", "canceled", "auth_error", "error", "error_code"];
+      if (keys.some((k) => url.searchParams.has(k))) {
+        window.history.replaceState({}, "", url.pathname + url.hash);
       }
-    } catch {
-      /* ignore */
-    }
+    } catch { /* ignore */ }
 
     void load();
     return () => {
       aborted = true;
     };
-  }, [me?.user?.id]);
+  }, [ready, me?.user?.id]);
 
   const entriesThisMonth = useMemo(() => {
     if (loading) return "—";
     return Math.max(0, Math.floor(pointsThisMonth * TIER_BOOST[tier]));
   }, [loading, pointsThisMonth, tier]);
 
+  const subtitle = useMemo(() => {
+    if (!ready) return "Loading your rewards…";
+    return showExplainer
+      ? "Points become entries for weekly and monthly draws. Join free to get started — upgrade any time for boosted entries."
+      : "Earn points every month you’re a paid member. Your tier boosts points; points become entries for weekly and monthly draws.";
+  }, [ready, showExplainer]);
+
   return (
     <Container>
       <PageHeader
         title="Rewards"
-        subtitle={
-          showExplainer
-            ? "Points become entries for weekly and monthly draws. Join free to get started — upgrade any time for boosted entries."
-            : "Earn points every month you’re a paid member. Your tier boosts points; points become entries for weekly and monthly draws."
-        }
+        subtitle={subtitle}
         aside={
-          showExplainer ? (
+          !ready ? null : showExplainer ? (
             <div className="flex items-center gap-2">
               {!isSignedIn && (
                 <button
@@ -179,8 +177,8 @@ export default function RewardsPage() {
         </div>
       )}
 
-      {/* Explainer for Access/logged-out */}
-      {showExplainer && (
+      {/* Access / logged-out / inactive */}
+      {ready && showExplainer && (
         <>
           <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
             <div className="font-medium mb-1">How entries work</div>
@@ -188,13 +186,8 @@ export default function RewardsPage() {
               <li>Join free to browse and redeem offers.</li>
               <li>Become a Member or Pro to start earning points each month.</li>
               <li>Your tier boosts points: Member 1.25×, Pro 1.5×.</li>
-              <li>
-                Points convert to entries for weekly spot prizes and a monthly draw.
-              </li>
-              <li>
-                No purchase necessary — free postal entry route available on public
-                promo pages.
-              </li>
+              <li>Points convert to entries for weekly spot prizes and the monthly draw.</li>
+              <li>No purchase necessary — free postal entry route is available on public promo pages.</li>
             </ul>
           </div>
 
@@ -225,14 +218,13 @@ export default function RewardsPage() {
           </div>
 
           <div className="mt-6 text-[12px] text-neutral-500">
-            Entries close <span className="font-semibold">{drawCutoff}</span>. Paid and
-            free routes are treated equally.
+            Entries close <span className="font-semibold">{drawCutoff}</span>. Paid and free routes are treated equally.
           </div>
         </>
       )}
 
-      {/* Paid, active members see their stats */}
-      {!showExplainer && (
+      {/* Paid, active members */}
+      {ready && !showExplainer && (
         <>
           <div className="grid gap-4 md:grid-cols-3">
             <StatCard
@@ -265,9 +257,7 @@ export default function RewardsPage() {
           <div className="mt-6 rounded-xl border border-neutral-800 bg-neutral-900 p-4">
             <div className="font-medium mb-1">Next draw</div>
             <div className="text-sm text-neutral-300">
-              Entries close <span className="font-semibold">{drawCutoff}</span>. Winners
-              are selected at random from all eligible entries (paid and free routes
-              treated equally).
+              Entries close <span className="font-semibold">{drawCutoff}</span>. Winners are selected at random from all eligible entries (paid and free routes treated equally).
             </div>
           </div>
         </>
@@ -277,9 +267,8 @@ export default function RewardsPage() {
       <div className="mt-6 rounded-xl border border-dashed border-neutral-800 p-4">
         <div className="font-medium mb-1">Referrals (coming soon)</div>
         <p className="text-sm text-neutral-400">
-          Invite a mate, earn bonus points once they become a paid member (after a
-          short verification window). We’ll show your invite link and referral-earned
-          points here.
+          Invite a mate, earn bonus points once they become a paid member (after a short verification window).
+          We’ll show your invite link and referral-earned points here.
         </p>
       </div>
     </Container>

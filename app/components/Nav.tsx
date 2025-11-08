@@ -1,32 +1,29 @@
 // app/components/Nav.tsx
 "use client";
-
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useMemo } from "react";
 import { useMe } from "@/lib/useMe";
-import { routeToJoin } from "@/lib/routeToJoin";
 import { TRIAL_ACTIVE, TRIAL_COPY } from "@/lib/trial";
 
 export default function Nav() {
-  const me = useMe();
+  const pathname = usePathname();
+  const me = useMe() as any;
+
   const showTrialChip = useMemo(() => {
     if (!TRIAL_ACTIVE) return false;
-    if (!me?.user) return true;
+    if (!me) return true;
     return !(me.status === "active" && (me.tier === "member" || me.tier === "pro"));
   }, [me]);
 
-  const goSignInOrJoin = () => {
-    if (typeof window === "undefined") return;
-    if (window.location.pathname === "/join") {
-      // already on /join – focus the email box
-      const el = document.getElementById("join-email") as HTMLInputElement | null;
-      if (el) {
-        el.focus();
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-        return;
-      }
+  const onSignInJoin = () => {
+    if (pathname === "/join") {
+      // scroll to the free input
+      const el = document.querySelector("#join-free") as HTMLElement | null;
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
     }
-    window.location.href = routeToJoin("access");
+    window.location.href = "/join#free";
   };
 
   return (
@@ -39,37 +36,27 @@ export default function Nav() {
           <Link href="/rewards" className="text-sm text-neutral-300 hover:text-white">Rewards</Link>
 
           {showTrialChip && (
-            <span className="hidden sm:inline rounded border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-200">
+            <span className="hidden sm:inline rounded border border-brand/30 bg-brand/10 px-2 py-0.5 text-xs text-brand">
               {TRIAL_COPY}
             </span>
           )}
         </div>
 
         <div className="flex items-center gap-2">
-          {me?.user ? (
+          {me?.email ? (
             <>
               {me.tier !== "pro" && me.status !== "canceled" && (
-                <Link
-                  href="/account#upgrade"
-                  className="rounded bg-neutral-900 px-3 py-1 text-sm hover:bg-neutral-800"
-                  title={`You're ${me.tier}. Upgrade to Pro.`}
+                <button
+                  onClick={() => (window.location.href = "/account#upgrade")}
+                  className="btn-brand"
                 >
                   Upgrade
-                </Link>
+                </button>
               )}
-              <Link
-                href="/account"
-                className="rounded bg-amber-400 px-3 py-1 text-sm font-medium text-black hover:opacity-90"
-                title={`Signed in as ${me.email}`}
-              >
-                Account
-              </Link>
+              <Link href="/account" className="btn-brand">Account</Link>
             </>
           ) : (
-            <button
-              onClick={goSignInOrJoin}
-              className="rounded bg-amber-400 px-3 py-1 text-sm font-medium text-black hover:opacity-90"
-            >
+            <button onClick={onSignInJoin} className="btn-brand">
               Sign in / Join
             </button>
           )}

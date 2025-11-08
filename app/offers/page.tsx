@@ -8,6 +8,8 @@ import PrimaryButton from "@/components/PrimaryButton";
 import { OfferCard, type Offer } from "@/components/OfferCard";
 import { useJoinActions } from "@/components/useJoinActions";
 import { useMe } from "@/lib/useMe";
+import { useMeReady } from "@/lib/useMeReady";
+import { routeToJoin } from "@/lib/routeToJoin";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 import { track } from "@/lib/track";
 
@@ -19,42 +21,49 @@ const API_BASE =
 type Tier = "access" | "member" | "pro";
 
 export default function OffersPage() {
-  // Auth/membership (single source of truth)
-  const me = useMe(); // { user, tier, status, ready }
+  // Auth/membership
+  const me = useMe();                // { user, tier, status, ready? }
+  const ready = useMeReady(me);      // prevents UI flash until we know auth
   const tier: Tier = (me?.tier as Tier) ?? "access";
-  const isActive = me?.status === "active" || me?.status === "trialing";
-  const isEligible = isActive && (tier === "member" || tier === "pro");
-  const showTrial = shouldShowTrial(me);
+  const isPaidTier = tier === "member" || tier === "pro";
+  const isActivePaid = isPaidTier && (me?.status === "active" || me?.status === "trialing");
   const isLoggedIn = !!me?.user;
+  const showTrial = shouldShowTrial(me);
 
   // Where to bounce back after auth/checkout
-  const next =
-    typeof window !== "undefined" ? window.location.pathname : "/offers";
+  const next = "/offers";
   const { busy, error, startMembership } = useJoinActions(next);
 
-  // Offers (use access visibility as a public catalogue/teaser)
+  // Offers
   const [items, setItems] = useState<Offer[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchErr, setFetchErr] = useState<string>("");
 
   useEffect(() => {
     let aborted = false;
+
+    // Only fetch once we know whether user is eligible (avoids loading the wrong set then swapping)
+    if (!ready) return;
+
     (async () => {
       try {
         setLoading(true);
         setFetchErr("");
-        const res = await fetch(`${API_BASE}/api/offers?visibility=access`, {
-          cache: "no-store",
-        });
+
+        // Eligible members get the full catalogue; everyone else sees public/teaser
+        const url = isActivePaid
+          ? `${API_BASE}/api/offers`
+          : `${API_BASE}/api/offers?visibility=access`;
+
+        const res = await fetch(url, { cache: "no-store" });
         if (!res.ok) throw new Error(`Offers failed: ${res.status}`);
+
         const data = (await res.json()) as unknown;
         if (!aborted) setItems(Array.isArray(data) ? (data as Offer[]) : []);
       } catch (e) {
         if (!aborted) {
           setFetchErr(
-            e instanceof Error
-              ? e.message
-              : "Failed to load offers. Please try again."
+            e instanceof Error ? e.message : "Failed to load offers. Please try again."
           );
           setItems([]);
         }
@@ -62,22 +71,11 @@ export default function OffersPage() {
         if (!aborted) setLoading(false);
       }
     })();
+
     return () => {
       aborted = true;
     };
-  }, []);
-
-  // Simple, unified routing to /join with an optional preselected plan
-  const routeToJoin = (plan?: "member" | "pro") => {
-    try {
-      if (plan) {
-        window.localStorage.setItem("join_wanted_plan", plan);
-      } else {
-        window.localStorage.removeItem("join_wanted_plan");
-      }
-    } catch {}
-    window.location.href = "/join";
-  };
+  }, [ready, isActivePaid]);
 
   const unlockClick = (source: "banner" | "card" | "sticky") => {
     track("offers_nudge_upgrade_click", { trial: showTrial, source });
@@ -86,16 +84,15 @@ export default function OffersPage() {
 
   const joinFreeClick = (source: "banner" | "sticky") => {
     track("offers_nudge_join_free_click", { source });
-    routeToJoin(); // no preselect = join free flow
+    routeToJoin(); // Access flow
   };
 
   const redeem = (o: Offer) => {
-    if (!isEligible) {
-      // Not eligible → funnel to join
+    if (!isActivePaid) {
       unlockClick("card");
       return;
     }
-    // Track and go
+    // Track then open
     fetch(`${API_BASE}/api/redemptions/click`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -106,23 +103,24 @@ export default function OffersPage() {
     if (o.link) window.open(o.link, "_blank", "noopener,noreferrer");
   };
 
-  // Derive page subtitle per state (crisper copy)
+  // Subtitle per state
   const subtitle = useMemo(() => {
-    if (isEligible) return "All your member deals in one place.";
-    if (isLoggedIn)
-      return "Browse the catalogue. Unlock member-only redemptions when you upgrade.";
+    if (!ready) return "Loading your offers…";
+    if (isActivePaid) return "All your member deals in one place.";
+    if (isLoggedIn) return "Browse the catalogue. Unlock member-only redemptions when you upgrade.";
     return "A taste of the savings available. Join free or pick a plan to unlock full access.";
-  }, [isEligible, isLoggedIn]);
+  }, [ready, isActivePaid, isLoggedIn]);
+
+  // Skeleton until auth is resolved to avoid flash
+  const showSkeleton = !ready || loading;
 
   return (
     <>
-      {/* Sticky mobile CTA for Access/unauthenticated only */}
-      {!isEligible && (
+      {/* Sticky mobile CTA for non-eligible only */}
+      {!isActivePaid && ready && (
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70 md:hidden">
           <div className="mx-auto max-w-5xl px-4 py-3 flex items-center justify-between gap-2">
-            <div className="text-xs text-neutral-300">
-              Unlock member-only redemptions
-            </div>
+            <div className="text-xs text-neutral-300">Unlock member-only redemptions</div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => joinFreeClick("sticky")}
@@ -167,7 +165,7 @@ export default function OffersPage() {
         )}
 
         {/* Upgrade nudge for Access / inactive users */}
-        {!isEligible && (
+        {!isActivePaid && ready && (
           <div className="mb-4 rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm text-neutral-300">
@@ -193,7 +191,7 @@ export default function OffersPage() {
         )}
 
         {/* Catalogue */}
-        {loading ? (
+        {showSkeleton ? (
           <div className="grid gap-3 md:grid-cols-3">
             {Array.from({ length: 6 }).map((_, i) => (
               <div
@@ -214,10 +212,12 @@ export default function OffersPage() {
                   key={o.id}
                   offer={o}
                   onRedeem={() => redeem(o)}
-                  disabled={!isEligible}
-                  // Teaser copy for locked state
+                  // Let the card compute lock state
+                  userTier={tier}
+                  activePaid={isActivePaid}
+                  // Optional teaser override for unauthenticated/Access visitors
                   ctaLabel={
-                    !isEligible
+                    !isActivePaid
                       ? showTrial
                         ? TRIAL_COPY
                         : isLoggedIn
@@ -232,11 +232,9 @@ export default function OffersPage() {
         )}
 
         {/* Secondary nudge (desktop only) */}
-        {!isEligible && (
+        {!isActivePaid && ready && (
           <div className="mt-6 hidden md:flex items-center justify-between rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
-            <div className="text-sm text-neutral-300">
-              Ready to unlock the full catalogue?
-            </div>
+            <div className="text-sm text-neutral-300">Ready to unlock the full catalogue?</div>
             <div className="flex gap-2">
               <button
                 onClick={() => joinFreeClick("banner")}

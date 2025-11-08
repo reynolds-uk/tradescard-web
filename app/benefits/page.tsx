@@ -6,16 +6,18 @@ import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import PrimaryButton from "@/components/PrimaryButton";
 import { useMe } from "@/lib/useMe";
+import { useMeReady } from "@/lib/useMeReady";
 import { routeToJoin } from "@/lib/routeToJoin";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 
 type Tier = "access" | "member" | "pro";
+
 type Benefit = {
   id: string;
   title: string;
   description?: string | null;
-  tier?: Tier | string;
-  link?: string | null;
+  tier?: Tier | string;     // required tier for eligibility
+  link?: string | null;     // “How to use” or instructions
   is_active?: boolean;
   priority?: number;
 };
@@ -27,6 +29,9 @@ const API_BASE =
 
 const TIER_ORDER: Record<Tier, number> = { access: 0, member: 1, pro: 2 };
 
+/* -------------------------
+   UI atoms
+--------------------------*/
 function Pill({
   children,
   tone = "muted",
@@ -73,16 +78,18 @@ function SkeletonCard() {
   );
 }
 
+/* -------------------------
+   Page
+--------------------------*/
 export default function BenefitsPage() {
-  const me = useMe(); // { user?, email?, tier, status, ready }
+  const me = useMe();                          // { user?, email?, tier, status, ready? }
+  const ready = useMeReady(me);                // avoid logged-out → in flash
   const showTrial = shouldShowTrial(me);
 
-  const isActivePaid =
-    !!me && me.tier !== "access" && (me.status === "active" || me.status === "trialing");
-  const tierIndex: number = useMemo(
-    () => TIER_ORDER[(me?.tier as Tier) ?? "access"],
-    [me?.tier]
-  );
+  const tier: Tier = (me?.tier as Tier) ?? "access";
+  const tierIndex = TIER_ORDER[tier];
+  const isPaidTier = tier === "member" || tier === "pro";
+  const isActivePaid = isPaidTier && (me?.status === "active" || me?.status === "trialing");
 
   const [benefits, setBenefits] = useState<Benefit[]>([]);
   const [loading, setLoading] = useState(true);
@@ -90,27 +97,40 @@ export default function BenefitsPage() {
 
   const [detail, setDetail] = useState<Benefit | null>(null);
 
-  // Upgrade routing (no modal)
+  // Upgrade routing (no modal, preserves intent)
   const goUpgrade = () => {
-    if (!isActivePaid) return routeToJoin("member");
-    if (me?.tier === "member") return routeToJoin("pro");
+    if (!isActivePaid) {
+      routeToJoin("member");
+      return;
+    }
+    if (tier === "member") {
+      routeToJoin("pro");
+    }
   };
 
+  // Load catalogue once auth state is known
   useEffect(() => {
+    if (!ready) return;
+
     let aborted = false;
     (async () => {
       try {
         setLoading(true);
         setErr("");
+
+        // One list is fine (server returns required tier per benefit)
         const res = await fetch(`${API_BASE}/api/benefits`, { cache: "no-store" });
         if (!res.ok) throw new Error(`benefits ${res.status}`);
+
         const list: Benefit[] = await res.json();
+
         const sorted = [...list].sort((a, b) => {
           const ap = a.priority ?? 0;
           const bp = b.priority ?? 0;
           if (ap !== bp) return bp - ap;
           return (a.title || "").localeCompare(b.title || "");
         });
+
         if (!aborted) setBenefits(sorted);
       } catch (e) {
         if (!aborted) setErr(e instanceof Error ? e.message : "Something went wrong");
@@ -118,20 +138,23 @@ export default function BenefitsPage() {
         if (!aborted) setLoading(false);
       }
     })();
+
     return () => {
       aborted = true;
     };
-  }, []);
+  }, [ready]);
 
-  // Split by eligibility
-  const eligible: Benefit[] = [];
-  const locked: Benefit[] = [];
-  for (const b of benefits) {
-    const requiredTier = (b.tier as Tier) ?? "member";
-    const requiredIdx = TIER_ORDER[requiredTier];
-    const ok = isActivePaid && tierIndex >= requiredIdx;
-    (ok ? eligible : locked).push({ ...b, tier: requiredTier });
-  }
+  // Segment by eligibility (once auth/benefits are ready)
+  const { eligible, locked } = useMemo(() => {
+    const yes: Benefit[] = [];
+    const no: Benefit[] = [];
+    for (const b of benefits) {
+      const required = ((b.tier as Tier) ?? "member") as Tier;
+      const ok = isActivePaid && tierIndex >= TIER_ORDER[required];
+      (ok ? yes : no).push({ ...b, tier: required });
+    }
+    return { eligible: yes, locked: no };
+  }, [benefits, isActivePaid, tierIndex]);
 
   const onOpenHowTo = (b: Benefit) => {
     if (b.link && /^https?:\/\//i.test(b.link)) {
@@ -141,44 +164,49 @@ export default function BenefitsPage() {
     setDetail(b);
   };
 
-  const subtitle = isActivePaid
-    ? "Your membership includes the benefits below. Upgrade to unlock more."
-    : "Built-in protection and support for paid members. Join to unlock benefits.";
+  const subtitle = useMemo(() => {
+    if (!ready) return "Loading your benefits…";
+    if (isActivePaid) return "Your membership includes the benefits below. Upgrade to unlock more.";
+    return "Built-in protection and support for paid members. Join to unlock benefits.";
+  }, [ready, isActivePaid]);
 
+  /* -------------------------
+     Render
+  --------------------------*/
   return (
     <Container>
       <PageHeader
         title="Benefits"
         subtitle={subtitle}
         aside={
-          isActivePaid ? (
-            <div className="flex items-center gap-2 text-sm">
-              <TierTag tier={me!.tier as Tier} />
-              <Pill tone={me!.status === "active" ? "ok" : "warn"}>{me!.status}</Pill>
-            </div>
-          ) : showTrial ? (
-            <span className="hidden sm:inline rounded border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-200">
-              {TRIAL_COPY}
-            </span>
+          ready ? (
+            isActivePaid ? (
+              <div className="flex items-center gap-2 text-sm">
+                <TierTag tier={tier} />
+                <Pill tone={me!.status === "active" ? "ok" : "warn"}>{me!.status}</Pill>
+              </div>
+            ) : showTrial ? (
+              <span className="hidden sm:inline rounded border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-200">
+                {TRIAL_COPY}
+              </span>
+            ) : null
           ) : null
         }
       />
 
-      {/* Current plan banner */}
-      {me && (
+      {/* Current plan banner (only when we know the state) */}
+      {ready && me && (
         <div className="mb-4 rounded-xl border border-neutral-800 bg-neutral-950 p-4 flex items-center justify-between gap-3">
           <div className="text-sm">
             <div className="font-medium">
-              You’re on <span className="underline">{(me.tier as Tier).toUpperCase()}</span>.
+              You’re on <span className="underline">{tier.toUpperCase()}</span>.
             </div>
-            <div className="text-neutral-400">
-              Downgrading removes paid benefits from your plan.
-            </div>
+            <div className="text-neutral-400">Downgrading removes paid benefits from your plan.</div>
           </div>
 
-          {me.tier !== "pro" && (
+          {tier !== "pro" && (
             <div className="flex items-center gap-2">
-              {me.tier === "member" ? (
+              {tier === "member" ? (
                 <PrimaryButton onClick={goUpgrade}>Upgrade to Pro</PrimaryButton>
               ) : (
                 <PrimaryButton onClick={goUpgrade}>
@@ -197,7 +225,7 @@ export default function BenefitsPage() {
       )}
 
       {/* Loading skeleton */}
-      {loading && (
+      {(loading || !ready) && (
         <div className="grid gap-4 md:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <SkeletonCard key={i} />
@@ -205,7 +233,7 @@ export default function BenefitsPage() {
         </div>
       )}
 
-      {!loading && (
+      {!loading && ready && (
         <>
           {/* INCLUDED */}
           <section className="mb-6">
@@ -271,9 +299,9 @@ export default function BenefitsPage() {
             {locked.length > 0 ? (
               <div className="grid gap-4 md:grid-cols-3">
                 {locked.map((b) => {
-                  const required = (b.tier as Tier) ?? "member";
+                  const required = ((b.tier as Tier) ?? "member") as Tier;
                   const nextCta =
-                    me?.tier === "member" && required === "pro"
+                    tier === "member" && required === "pro"
                       ? "Upgrade to Pro"
                       : !isActivePaid
                       ? "Join to unlock"
@@ -330,10 +358,7 @@ export default function BenefitsPage() {
                 Join as <span className="font-semibold">Member</span> for core protection and
                 support, or go <span className="font-semibold">Pro</span> for more.
               </p>
-              <PrimaryButton
-                onClick={() => routeToJoin("member")}
-                className="mt-3"
-              >
+              <PrimaryButton onClick={() => routeToJoin("member")} className="mt-3">
                 {showTrial ? TRIAL_COPY : "See membership options"}
               </PrimaryButton>
             </div>
@@ -343,11 +368,7 @@ export default function BenefitsPage() {
 
       {/* Simple detail drawer for “How to use” */}
       {detail && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
-        >
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
           <button
             aria-label="Close"
             onClick={() => setDetail(null)}
@@ -363,9 +384,7 @@ export default function BenefitsPage() {
                 Close
               </button>
             </div>
-            {detail.description && (
-              <p className="text-sm text-neutral-300">{detail.description}</p>
-            )}
+            {detail.description && <p className="text-sm text-neutral-300">{detail.description}</p>}
             <div className="mt-4">
               {detail.link ? (
                 <a
@@ -377,9 +396,7 @@ export default function BenefitsPage() {
                   Open instructions
                 </a>
               ) : (
-                <div className="text-sm text-neutral-400">
-                  No instructions link available yet.
-                </div>
+                <div className="text-sm text-neutral-400">No instructions link available yet.</div>
               )}
             </div>
           </div>
