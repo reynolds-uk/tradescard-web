@@ -2,52 +2,166 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Theme variables aligned to the marketing site */
+/* =========================
+   Theme tokens
+   ========================= */
 :root {
-  --bg:#0b0c0d;       /* surface.bg    */
-  --panel:#10131a;    /* surface.panel */
-  --panel2:#151924;   /* surface.panel2 */
-  --ink:#f4f6f8;      /* ink.DEFAULT   */
-  --muted:#aeb6c3;    /* ink.muted     */
-  --line:#1c2230;
-  --brand:#FD5A24;    /* brand.DEFAULT */
-  --brand-ink:#0b0c0d;/* brand.ink     */
-  --focus:#fd5a24aa;
-  --chip:#171c27;
+  /* surfaces */
+  --bg:        #0b0c0d;
+  --panel:     #10131a;
+  --panel-2:   #151924;
+  --line:      #1c2230;
+
+  /* text */
+  --ink:       #f4f6f8;
+  --muted:     #aeb6c3;
+
+  /* brand */
+  --brand:     #FD5A24;   /* primary brand */
+  --brand-ink: #0b0c0d;   /* readable ink on brand */
+
+  /* accents */
+  --focus:     #fd5a24aa;
+  --chip:      #171c27;
+
+  /* semantic */
+  --ok:        #22c55e;   /* emerald-500-ish */
+  --warn:      #f59e0b;   /* amber-500-ish */
+  --bad:       #ef4444;   /* red-500-ish */
 }
+
+:root { color-scheme: dark; }
 
 /* Base */
-:root { color-scheme: dark; }
-body { @apply bg-neutral-950 text-neutral-100; }
+html, body { height: 100%; }
+body { @apply bg-neutral-950 text-neutral-100 antialiased; }
 
-/* Existing helpers (kept intact) */
-.container { @apply max-w-3xl mx-auto px-4; }
-.card { @apply rounded-2xl border border-neutral-800 p-6 bg-neutral-900/40 shadow; }
-.btn { @apply inline-flex items-center gap-2 rounded-lg bg-white text-black px-4 py-2 font-medium hover:bg-neutral-200 transition; }
-.input { @apply w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 outline-none focus:ring-2 focus:ring-white; }
-.label { @apply block text-sm mb-1 text-neutral-300; }
-.select { @apply input; }
-.small { @apply text-sm text-neutral-400; }
-
-/* Brand utilities (non-breaking) */
-@layer utilities {
-  .bg-app   { background-color: var(--bg); }
-  .bg-panel { background-color: var(--panel); }
-  .text-ink { color: var(--ink); }
-  .text-muted { color: var(--muted); }
-  .ring-focus { box-shadow: 0 0 0 3px var(--focus); }
+/* =========================
+   Layout helpers
+   ========================= */
+.container { @apply mx-auto max-w-5xl px-4; }
+.card {
+  @apply rounded-2xl border border-neutral-800 bg-neutral-900/40 p-6 shadow;
+}
+.card-panel {
+  background: var(--panel);
+  @apply rounded-2xl border border-neutral-900 p-5;
 }
 
-/* Brand buttons (opt-in so we don’t change existing .btn silently) */
+/* =========================
+   Buttons
+   ========================= */
+.btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2
+         text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+/* Primary brand CTA */
 .btn-brand {
   color: var(--brand-ink);
   background: var(--brand);
-  @apply inline-flex items-center gap-2 rounded-xl px-4 py-2 font-medium transition;
 }
 .btn-brand:hover { opacity: .92; }
 
-/* Links and chips if you want them */
+/* Neutral / secondary */
+.btn-muted {
+  @apply bg-neutral-900 border border-neutral-700 text-neutral-200 hover:bg-neutral-800;
+}
+
+/* Outline */
+.btn-outline {
+  @apply border border-neutral-700 bg-transparent text-neutral-100 hover:bg-neutral-900;
+}
+
+/* Ghost */
+.btn-ghost {
+  @apply bg-transparent text-neutral-300 hover:text-white;
+}
+
+/* Link-like CTA */
+.btn-link {
+  @apply underline underline-offset-4 hover:opacity-90 text-sm;
+}
+
+/* =========================
+   Inputs / Forms
+   ========================= */
+.input {
+  @apply w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm
+         outline-none focus:ring-2 focus:ring-white;
+}
+.label { @apply block mb-1 text-sm text-neutral-300; }
+
+/* =========================
+   Badges / Chips
+   ========================= */
+.badge {
+  @apply inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] leading-none;
+  background: #1b1f2a;
+  color: #cbd5e1;
+}
+.badge-ok   { background: color-mix(in oklab, var(--ok) 15%, transparent);   color: #a7f3d0; }
+.badge-warn { background: color-mix(in oklab, var(--warn) 18%, transparent); color: #fde68a; }
+.badge-bad  { background: color-mix(in oklab, var(--bad)  18%, transparent); color: #fecaca; }
+.badge-brand{
+  background: color-mix(in oklab, var(--brand) 18%, transparent); color: #ffd7c2;
+}
+
+/* Small, subtle promo chip (use this for the £1 trial so it’s not shouting) */
+.promo-chip {
+  @apply rounded px-2 py-0.5 text-[11px] leading-none border;
+  background: color-mix(in oklab, var(--warn) 16%, transparent);
+  border-color: color-mix(in oklab, var(--warn) 28%, transparent);
+  color: #f8e1b0;
+}
+/* Hide on xs to reduce duplication noise (shows ≥sm) */
+.promo-chip-xs-hide { @apply hidden sm:inline; }
+
+/* Old “chip” helper retained */
+.chip { background: var(--chip); @apply inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs text-neutral-300; }
+
+/* =========================
+   Alerts
+   ========================= */
+.alert {
+  @apply rounded border px-3 py-2 text-sm;
+}
+.alert-info {
+  border-color: color-mix(in oklab, var(--warn) 28%, transparent);
+  background:   color-mix(in oklab, var(--warn) 12%, transparent);
+  color: #f8e1b0;
+}
+.alert-success {
+  border-color: color-mix(in oklab, var(--ok) 30%, transparent);
+  background:   color-mix(in oklab, var(--ok) 12%, transparent);
+  color: #a7f3d0;
+}
+.alert-error {
+  border-color: color-mix(in oklab, var(--bad) 35%, transparent);
+  background:   color-mix(in oklab, var(--bad) 12%, transparent);
+  color: #fecaca;
+}
+
+/* =========================
+   Skeleton
+   ========================= */
+.skeleton { @apply animate-pulse rounded-xl border border-neutral-800 bg-neutral-900; }
+
+/* =========================
+   Focus ring
+   ========================= */
+.ring-focus { box-shadow: 0 0 0 3px var(--focus); }
+
+/* =========================
+   Brand text / links
+   ========================= */
+.text-ink   { color: var(--ink); }
+.text-muted { color: var(--muted); }
 .link-brand { color: var(--brand); }
 .link-brand:hover { opacity: .9; }
 
-.chip { background: var(--chip); @apply inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs text-neutral-300; }
+/* =========================
+   Small utilities
+   ========================= */
+.bg-app   { background-color: var(--bg); }
+.bg-panel { background-color: var(--panel); }

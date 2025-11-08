@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
 import Container from "@/components/Container";
@@ -17,8 +17,9 @@ type Plan = "access" | "member" | "pro";
 
 export default function JoinPage() {
   const router = useRouter();
+  const params = useSearchParams();
   const me = useMe();
-  const { user, tier, status, ready } = me;
+  const { user } = me;
   const next = "/join";
   const { busy, error, startMembership } = useJoinActions(next);
 
@@ -40,27 +41,43 @@ export default function JoinPage() {
     []
   );
 
-  // If the visitor is already logged in, take them into the app
+  // subtle trial eligibility
+  const showTrialChip = shouldShowTrial(me);
+
+  // If already signed in, /join isn't needed → into the app
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getSession();
       if (data?.session?.user) router.replace("/offers");
     })();
-    // run once on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Show trial banner only when eligible
-  const showTrialBanner = shouldShowTrial(me);
-
-  // If we asked the user to sign in for a plan, remember it and auto-continue after they return
+  // Handle intent from ?plan=member|pro and localStorage fallback
   useEffect(() => {
-    const stored = window.localStorage.getItem("join_wanted_plan") as Plan | null;
-    if (user && stored && stored !== "access") {
-      window.localStorage.removeItem("join_wanted_plan");
-      void startMembership(stored);
+    const qPlan = params?.get("plan") as Exclude<Plan, "access"> | null;
+    const stored = (typeof window !== "undefined"
+      ? window.localStorage.getItem("join_wanted_plan")
+      : null) as Exclude<Plan, "access"> | null;
+
+    const intent = qPlan || stored || null;
+    if (!intent) return;
+
+    if (user) {
+      // already signed in → go straight to checkout
+      void startMembership(intent);
+    } else {
+      // show inline email on the chosen card
+      setWanted(intent);
+      setInlineEmailFor(intent);
+      if (qPlan && typeof window !== "undefined") {
+        window.localStorage.setItem("join_wanted_plan", qPlan);
+      }
+      // focus email
+      setTimeout(() => emailRef.current?.focus(), 0);
     }
-  }, [user, startMembership]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params, user]);
 
   async function sendMagicLink(targetEmail: string) {
     const trimmed = targetEmail.trim();
@@ -99,14 +116,14 @@ export default function JoinPage() {
       // No account yet → keep everything inline on the chosen card
       setWanted(plan);
       setInlineEmailFor(plan);
-      window.localStorage.setItem("join_wanted_plan", plan);
-      // visual focus
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("join_wanted_plan", plan);
+      }
       setTimeout(() => emailRef.current?.focus(), 0);
       return;
     }
     track(plan === "member" ? "join_member_click" : "join_pro_click", {
-      // informative, not a feature flag any more (logic lives in shouldShowTrial)
-      trial: showTrialBanner,
+      trial: showTrialChip,
     });
     await startMembership(plan);
   }
@@ -117,7 +134,9 @@ export default function JoinPage() {
     try {
       await sendMagicLink(email);
       setSent(true);
-      setInfo(`Check your inbox for your sign-in link. We’ll continue to ${inlineEmailFor} after you sign in.`);
+      setInfo(
+        `Check your inbox for your sign-in link. We’ll continue to ${inlineEmailFor} after you sign in.`
+      );
       track("join_free_click");
     } catch {
       setInfo("We couldn't send the link just now. Please try again.");
@@ -141,12 +160,12 @@ export default function JoinPage() {
     accent?: "pro" | "member";
   }) {
     const isInline = inlineEmailFor === plan;
-    const borderAccent =
-      accent === "pro" ? "border-amber-400/30" : "border-neutral-800";
 
     return (
       <div
-        className={`rounded-2xl border ${borderAccent} bg-neutral-900 p-4`}
+        className={`rounded-2xl border ${
+          accent === "pro" ? "border-amber-400/30 ring-1 ring-amber-400/20" : "border-neutral-800"
+        } bg-neutral-900 p-4`}
       >
         <div className="flex items-center justify-between">
           <div className="text-lg font-semibold">{title}</div>
@@ -166,7 +185,9 @@ export default function JoinPage() {
             className="mt-4 w-full"
           >
             {plan === "member"
-              ? (showTrialBanner ? TRIAL_COPY : "Become a Member")
+              ? showTrialChip
+                ? TRIAL_COPY
+                : "Choose Member"
               : "Choose Pro"}
           </PrimaryButton>
         ) : (
@@ -198,31 +219,20 @@ export default function JoinPage() {
         title="Join TradesCard"
         subtitle="Start free, or pick a plan with protection, early deals and monthly rewards. Switch or cancel any time."
         aside={
-          showTrialBanner ? (
-            <span className="hidden sm:inline rounded bg-amber-400/20 text-amber-200 text-xs px-2 py-1 border border-amber-400/30">
-              {TRIAL_COPY}
-            </span>
+          showTrialChip ? (
+            <span className="promo-chip promo-chip-xs-hide">{TRIAL_COPY}</span>
           ) : undefined
         }
       />
 
       {info && (
-        <div className="mb-4 rounded border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-amber-200 text-sm">
-          {info}
-        </div>
+        <div className="mb-4 alert alert-info">{info}</div>
       )}
       {error && (
-        <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300 text-sm">
-          {error}
-        </div>
+        <div className="mb-4 alert alert-error">{error}</div>
       )}
 
-      {showTrialBanner && (
-        <div className="mb-4 rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-200">
-          Limited-time offer: {TRIAL_COPY}
-        </div>
-      )}
-
+      {/* Two plans */}
       <div className="grid gap-4 md:grid-cols-2">
         <PlanCard
           plan="member"
