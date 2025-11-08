@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import { useJoinModal } from "@/components/JoinModalContext";
-import { useMe } from "@/components/useMe"; // <-- centralised auth/tier state
+import { useMe } from "@/lib/useMe"; // <-- centralised auth/tier state
 import { track } from "@/lib/track";
 
 type Tier = "access" | "member" | "pro";
