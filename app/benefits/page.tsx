@@ -1,387 +1,88 @@
-// app/benefits/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import PrimaryButton from "@/components/PrimaryButton";
 import { useMe } from "@/lib/useMe";
 import { useMeReady } from "@/lib/useMeReady";
 import { routeToJoin } from "@/lib/routeToJoin";
-import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
+import PromoBenefits from "@/components/promo/PromoBenefits";
 
 type Tier = "access" | "member" | "pro";
 
-type Benefit = {
-  id: string;
-  title: string;
-  description?: string | null;
-  tier?: Tier | string;   // required tier
-  link?: string | null;   // “How to use”
-  is_active?: boolean;
-  priority?: number;
-};
-
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_API_BASE ||
-  "https://tradescard-api.vercel.app";
-
-const TIER_ORDER: Record<Tier, number> = { access: 0, member: 1, pro: 2 };
-
-/* UI atoms */
-function Pill({
-  children,
-  tone = "muted",
-  className = "",
-}: {
-  children: React.ReactNode;
-  tone?: "muted" | "ok" | "warn";
-  className?: string;
-}) {
-  const base = "rounded px-2 py-0.5 text-[11px] leading-none inline-flex items-center gap-1";
-  const cls =
-    tone === "ok"
-      ? "bg-green-900/30 text-green-300"
-      : tone === "warn"
-      ? "bg-amber-900/30 text-amber-300"
-      : "bg-neutral-800 text-neutral-300";
-  return <span className={`${base} ${cls} ${className}`}>{children}</span>;
-}
-
-function TierTag({ tier }: { tier: Tier }) {
-  const tone: Record<Tier, "muted" | "ok" | "warn"> = {
-    access: "muted",
-    member: "ok",
-    pro: "warn",
-  };
-  return <Pill tone={tone[tier]}>{tier.toUpperCase()}</Pill>;
-}
-
-function LockIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg width="12" height="12" viewBox="0 0 20 20" aria-hidden {...props}>
-      <path
-        d="M5 9V7a5 5 0 0110 0v2h1a1 1 0 011 1v8a1 1 0 01-1 1H4a1 1 0 01-1-1v-8a1 1 0 011-1h1zm2 0h6V7a3 3 0 10-6 0v2z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-function SkeletonCard() {
-  return (
-    <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 h-36 animate-pulse" />
-  );
-}
-
-/* Page */
 export default function BenefitsPage() {
-  const me = useMe();                 // { user?, email?, tier, status }
-  const ready = useMeReady();         // avoid logged-out → in flash
-  const showTrial = shouldShowTrial(me);
+  const me = useMe();                 // { user?, tier?, status? }
+  const ready = useMeReady();         // avoid auth flash
 
-  const isLoggedIn = !!me?.user;
   const tier: Tier = (me?.tier as Tier) ?? "access";
-  const tierIndex = TIER_ORDER[tier];
   const isPaidTier = tier === "member" || tier === "pro";
   const isActivePaid = isPaidTier && (me?.status === "active" || me?.status === "trialing");
 
-  const [benefits, setBenefits] = useState<Benefit[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string>("");
+  // While auth is unknown, just hold the skeleton via PromoBenefits' loading state
+  if (!ready || !isActivePaid) {
+    return (
+      <Container>
+        <PageHeader
+          title="Benefits"
+          subtitle="Built-in protection and support for paid members."
+        />
+        {/* Promo surface for visitors & Access accounts */}
+        <PromoBenefits
+          onJoin={() => routeToJoin("member")}
+          onPro={() => routeToJoin("pro")}
+        />
+      </Container>
+    );
+  }
 
-  const [detail, setDetail] = useState<Benefit | null>(null);
-
-  // Upgrade routing (no modal)
-  const goUpgrade = () => {
-    if (!isActivePaid) return routeToJoin("member");
-    if (tier === "member") return routeToJoin("pro");
-  };
-
-  // Load list after auth settled
-  useEffect(() => {
-    if (!ready) return;
-    let aborted = false;
-    (async () => {
-      try {
-        setLoading(true);
-        setErr("");
-        const res = await fetch(`${API_BASE}/api/benefits`, { cache: "no-store" });
-        if (!res.ok) throw new Error(`benefits ${res.status}`);
-        const list: Benefit[] = await res.json();
-
-        const sorted = [...list].sort((a, b) => {
-          const ap = a.priority ?? 0;
-          const bp = b.priority ?? 0;
-          if (ap !== bp) return bp - ap;
-          return (a.title || "").localeCompare(b.title || "");
-        });
-        if (!aborted) setBenefits(sorted);
-      } catch (e) {
-        if (!aborted) setErr(e instanceof Error ? e.message : "Something went wrong");
-      } finally {
-        if (!aborted) setLoading(false);
-      }
-    })();
-    return () => {
-      aborted = true;
-    };
-  }, [ready]);
-
-  // Split eligible vs locked
-  const { eligible, locked } = useMemo(() => {
-    const yes: Benefit[] = [];
-    const no: Benefit[] = [];
-    for (const b of benefits) {
-      const required = ((b.tier as Tier) ?? "member") as Tier;
-      const ok = isActivePaid && tierIndex >= TIER_ORDER[required];
-      (ok ? yes : no).push({ ...b, tier: required });
-    }
-    return { eligible: yes, locked: no };
-  }, [benefits, isActivePaid, tierIndex]);
-
-  const onOpenHowTo = (b: Benefit) => {
-    if (b.link && /^https?:\/\//i.test(b.link)) {
-      window.open(b.link, "_blank", "noopener,noreferrer");
-      return;
-    }
-    setDetail(b);
-  };
-
-  const subtitle = useMemo(() => {
-    if (!ready) return "Loading your benefits…";
-    if (isActivePaid) return "Your membership includes the benefits below. Upgrade to unlock more.";
-    return "Built-in protection and support for paid members.";
-  }, [ready, isActivePaid]);
-
+  // Paid & active → full member area
   return (
     <Container>
       <PageHeader
         title="Benefits"
-        subtitle={subtitle}
+        subtitle="Your membership includes the benefits below. Upgrade to unlock more."
         aside={
-          ready
-            ? isActivePaid
-              ? (
-                <div className="flex items-center gap-2 text-sm">
-                  <TierTag tier={tier} />
-                  <Pill tone={me?.status === "active" ? "ok" : "warn"}>{me?.status}</Pill>
-                </div>
-              )
-              : showTrial
-              ? (
-                <span className="hidden sm:inline rounded border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-200">
-                  {TRIAL_COPY}
-                </span>
-              )
-              : null
-            : null
+          <div className="text-xs rounded bg-neutral-900 border border-neutral-800 px-2 py-1">
+            {tier.toUpperCase()} • {me?.status}
+          </div>
         }
       />
 
-      {/* Signed-in Access note (never show to logged-out visitors) */}
-      {ready && isLoggedIn && !isActivePaid && (
-        <div className="mb-4 rounded-xl border border-neutral-800 bg-neutral-950 p-4 flex items-center justify-between gap-3">
-          <div className="text-sm">
-            <div className="font-medium">
-              You’re on <span className="underline">{tier.toUpperCase()}</span>.
-            </div>
-            <div className="text-neutral-400">Upgrade to unlock your member benefits.</div>
-          </div>
-          <PrimaryButton onClick={goUpgrade}>
-            {showTrial ? TRIAL_COPY : "Become a Member"}
-          </PrimaryButton>
+      {/* Example member tiles — replace with your real benefits grid or reuse your previous componentry */}
+      <section className="grid gap-4 md:grid-cols-3">
+        <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+          <div className="text-sm text-neutral-400 mb-1">Included</div>
+          <div className="font-semibold">Protect Lite</div>
+          <p className="mt-1 text-sm text-neutral-400">
+            Purchase protection and dispute help on eligible redemptions.
+          </p>
         </div>
-      )}
 
-      {err && (
-        <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 p-3 text-red-300">
-          {err}
+        <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+          <div className="text-sm text-neutral-400 mb-1">Included</div>
+          <div className="font-semibold">Priority Support</div>
+          <p className="mt-1 text-sm text-neutral-400">
+            Faster help when you need us most.
+          </p>
         </div>
-      )}
 
-      {/* Loading skeleton */}
-      {(loading || !ready) && (
-        <div className="grid gap-4 md:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <SkeletonCard key={i} />
-          ))}
-        </div>
-      )}
-
-      {!loading && ready && (
-        <>
-          {/* PROMO for non-paid (single CTA; no “Join free”) */}
-          {!isActivePaid && (
-            <div className="mb-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-              <div className="font-medium mb-2">Why go Member</div>
-              <ul className="list-disc list-inside text-neutral-300 space-y-1 text-sm">
-                <li>Protect Lite benefits: GP, wellbeing & confidential support.</li>
-                <li>Member-only help line and partner perks.</li>
-                <li>Monthly prize entries (boosted further in Pro).</li>
-                <li>Digital card with more coming soon.</li>
-              </ul>
-              <div className="mt-4">
-                <PrimaryButton onClick={() => routeToJoin("member")}>
-                  {showTrial ? TRIAL_COPY : "Become a Member"}
-                </PrimaryButton>
-              </div>
-            </div>
-          )}
-
-          {/* INCLUDED (only shown for paid members) */}
-          {isActivePaid && (
-            <section className="mb-6">
-              <div className="mb-3 flex items-end justify-between gap-2">
-                <h2 className="text-sm font-medium text-neutral-300">
-                  Included in your plan
-                  <span className="ml-2 text-xs text-neutral-500">({eligible.length})</span>
-                </h2>
-              </div>
-
-              {eligible.length > 0 ? (
-                <div className="grid gap-4 md:grid-cols-3">
-                  {eligible.map((b) => (
-                    <div
-                      key={b.id}
-                      className="group text-left rounded-2xl border border-neutral-800 bg-neutral-900 p-5 hover:bg-neutral-800 transition"
-                    >
-                      <div className="mb-2 flex items-center justify-between">
-                        <TierTag tier={(b.tier as Tier) ?? "member"} />
-                        <button
-                          onClick={() => onOpenHowTo(b)}
-                          className="text-xs text-neutral-400 underline group-hover:text-neutral-300"
-                        >
-                          How to use
-                        </button>
-                      </div>
-                      <div className="font-semibold">{b.title}</div>
-                      {b.description && (
-                        <div className="mt-1 text-sm text-neutral-400">{b.description}</div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 text-sm text-neutral-400">
-                  No active benefits in your current plan.
-                </div>
-              )}
-            </section>
-          )}
-
-          {/* LOCKED grid — minimal CTA to avoid clutter */}
-          <section>
-            <div className="mb-3 flex items-end justify-between gap-2">
-              <h2 className="text-sm font-medium text-neutral-300">
-                {isActivePaid ? "Upgrade to unlock" : "What you’ll unlock"}
-                <span className="ml-2 text-xs text-neutral-500">({locked.length})</span>
-              </h2>
-              {locked.length > 0 && (
-                <PrimaryButton onClick={goUpgrade}>
-                  {isActivePaid ? "Upgrade to Pro" : showTrial ? TRIAL_COPY : "Become a Member"}
-                </PrimaryButton>
-              )}
-            </div>
-
-            {locked.length > 0 ? (
-              <div className="grid gap-4 md:grid-cols-3">
-                {locked.map((b) => {
-                  const required = ((b.tier as Tier) ?? "member") as Tier;
-                  const nextCta =
-                    tier === "member" && required === "pro"
-                      ? "Upgrade to Pro"
-                      : !isActivePaid
-                      ? showTrial ? TRIAL_COPY : "Become a Member"
-                      : "Upgrade to unlock";
-
-                  return (
-                    <div
-                      key={b.id}
-                      className="relative rounded-2xl border border-neutral-800 bg-neutral-950/60 p-5"
-                    >
-                      <div className="mb-2 flex items-center justify-between">
-                        <TierTag tier={required} />
-                        <Pill tone="muted">
-                          <LockIcon /> Locked
-                        </Pill>
-                      </div>
-                      <div className="font-semibold">{b.title}</div>
-                      {b.description && (
-                        <div className="mt-1 text-sm text-neutral-400">{b.description}</div>
-                      )}
-                      <div className="mt-3">
-                        {nextCta === "Upgrade to Pro" ? (
-                          <button
-                            onClick={goUpgrade}
-                            className="text-sm underline underline-offset-4 hover:opacity-90"
-                          >
-                            Upgrade to Pro
-                          </button>
-                        ) : nextCta === "Upgrade to unlock" ? (
-                          <button
-                            onClick={goUpgrade}
-                            className="text-sm underline underline-offset-4 hover:opacity-90"
-                          >
-                            Upgrade to unlock
-                          </button>
-                        ) : (
-                          <PrimaryButton onClick={() => routeToJoin("member")}>
-                            {nextCta}
-                          </PrimaryButton>
-                        )}
-                      </div>
-                      <div className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-inset ring-neutral-800/60" />
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 text-sm text-neutral-400">
-                Nothing else to unlock in your tier.
-              </div>
-            )}
-          </section>
-        </>
-      )}
-
-      {/* “How to use” drawer */}
-      {detail && (
-        <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
-          <button
-            aria-label="Close"
-            onClick={() => setDetail(null)}
-            className="absolute inset-0 bg-black/60"
-          />
-          <div className="relative w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-lg font-semibold">{detail.title}</h3>
-              <button
-                onClick={() => setDetail(null)}
-                className="rounded px-2 py-1 text-sm bg-neutral-800 hover:bg-neutral-700"
-              >
-                Close
-              </button>
-            </div>
-            {detail.description && <p className="text-sm text-neutral-300">{detail.description}</p>}
-            <div className="mt-4">
-              {detail.link ? (
-                <a
-                  href={detail.link}
-                  target={/^https?:\/\//i.test(detail.link) ? "_blank" : undefined}
-                  rel={/^https?:\/\//i.test(detail.link) ? "noopener noreferrer" : undefined}
-                  className="inline-block rounded bg-neutral-200 text-neutral-900 text-sm px-3 py-2"
-                >
-                  Open instructions
-                </a>
-              ) : (
-                <div className="text-sm text-neutral-400">No instructions link available yet.</div>
-              )}
+        {/* Pro-only teaser inside paid view */}
+        {tier === "member" && (
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-950/60 p-5">
+            <div className="text-sm text-neutral-400 mb-1">Pro only</div>
+            <div className="font-semibold">Early-access deals</div>
+            <p className="mt-1 text-sm text-neutral-400">
+              Get first dibs on limited-quantity offers.
+            </p>
+            <div className="mt-3">
+              <PrimaryButton onClick={() => routeToJoin("pro")}>
+                Upgrade to Pro
+              </PrimaryButton>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </section>
     </Container>
   );
 }
