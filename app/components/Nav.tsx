@@ -1,60 +1,28 @@
 // app/components/Nav.tsx
 "use client";
-
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import Container from "./Container";
-import HeaderAuth from "../header-client";
-
-function cx(...xs: Array<string | false | null | undefined>) {
-  return xs.filter(Boolean).join(" ");
-}
+import { useJoinModal } from "./JoinModalContext";
 
 export default function Nav() {
-  const pathname = usePathname();
-
-  const tab = "px-3 py-1 rounded text-sm whitespace-nowrap";
-  const tabIdle = "text-neutral-300 hover:bg-neutral-900";
-  const tabActive = "bg-neutral-800 text-neutral-100";
-  const isActive = (href: string) => pathname === href;
+  const { openJoin } = useJoinModal();
 
   return (
-    <header className="sticky top-0 z-50 border-b border-neutral-900/60 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70">
-      <Container className="flex h-14 items-center gap-3">
-        <Link href="/" className="font-semibold text-neutral-100 mr-1">
-          TradesCard
-        </Link>
-
-        {/* Tabs (scrollable on mobile) */}
-        <nav className="flex gap-1 overflow-x-auto no-scrollbar">
-          <Link
-            href="/offers"
-            className={cx(tab, isActive("/offers") ? tabActive : tabIdle)}
-            aria-current={isActive("/offers") ? "page" : undefined}
+    <header className="border-b border-neutral-900/60">
+      <nav className="mx-auto max-w-5xl px-4 py-3 flex items-center gap-4">
+        <Link href="/" className="font-semibold">TradesCard</Link>
+        <div className="ml-auto flex items-center gap-3 text-sm">
+          <Link href="/offers">Offers</Link>
+          <Link href="/benefits">Benefits</Link>
+          <Link href="/rewards">Rewards</Link>
+          <Link href="/account">Account</Link>
+          <button
+            onClick={() => openJoin("member")}
+            className="rounded bg-amber-400 text-black px-3 py-1.5 font-medium hover:opacity-90"
           >
-            Offers
-          </Link>
-          <Link
-            href="/benefits"
-            className={cx(tab, isActive("/benefits") ? tabActive : tabIdle)}
-            aria-current={isActive("/benefits") ? "page" : undefined}
-          >
-            Benefits
-          </Link>
-          <Link
-            href="/rewards"
-            className={cx(tab, isActive("/rewards") ? tabActive : tabIdle)}
-            aria-current={isActive("/rewards") ? "page" : undefined}
-          >
-            Rewards
-          </Link>
-        </nav>
-
-        <div className="flex-1" />
-
-        {/* Right-side auth chip / Sign in button */}
-        <HeaderAuth />
-      </Container>
+            Sign in / Join
+          </button>
+        </div>
+      </nav>
     </header>
   );
 }

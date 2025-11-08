@@ -45,6 +45,10 @@ const TIER_COPY: Record<Tier, { label: string; boost: string; priceShort: string
   pro: { label: "PRO", boost: "1.50×", priceShort: "£7.99" },
 };
 
+// ---- Trial toggle (for £1 / 90-day etc.)
+const TRIAL = process.env.NEXT_PUBLIC_TRIAL_ACTIVE === "true";
+const TRIAL_COPY = process.env.NEXT_PUBLIC_TRIAL_COPY || "Try Member for £1 (90 days)";
+
 function Badge({
   children,
   tone = "muted",
@@ -170,14 +174,15 @@ export default function AccountPage() {
       setError("");
       const user = await currentUser();
       if (!user) {
-        // Open the unified Join modal in Access mode to capture email and continue
+        // Not signed in: open the Join modal with intent
         openJoin(plan);
         return;
       }
       const res = await fetch(`${API_BASE}/api/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: user.id, email: user.email, plan }),
+        // ---- pass trial hint so the API can swap Stripe prices
+        body: JSON.stringify({ user_id: user.id, email: user.email, plan, trial: TRIAL }),
         keepalive: true,
       });
       const json = await res.json().catch(() => ({} as { url?: string; error?: string }));
@@ -246,6 +251,11 @@ export default function AccountPage() {
   const canUpgrade = me?.status !== "canceled" && me?.tier === "member";
   const canDowngrade = me?.status !== "canceled" && me?.tier === "pro";
   const isActive = me?.status === "active" || me?.status === "trialing";
+
+  // Trial-aware labels
+  const memberCta = TRIAL ? `Join as Member — ${TRIAL_COPY}` : "Join as Member (£2.99/mo)";
+  const proCta = "Go Pro (£7.99/mo)";
+  const upgradeToProCta = "Upgrade to Pro";
 
   return (
     <Container>
@@ -405,14 +415,14 @@ export default function AccountPage() {
                   disabled={busy}
                   className="px-4 py-2 rounded-lg bg-amber-400 text-black font-medium disabled:opacity-60"
                 >
-                  {busy ? "Opening…" : "Join as Member (£2.99/mo)"}
+                  {busy ? "Opening…" : memberCta}
                 </button>
                 <button
                   onClick={() => startMembership("pro")}
                   disabled={busy}
                   className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-60"
                 >
-                  {busy ? "Opening…" : "Go Pro (£7.99/mo)"}
+                  {busy ? "Opening…" : proCta}
                 </button>
               </div>
             )}
@@ -424,7 +434,7 @@ export default function AccountPage() {
                   disabled={busy}
                   className="px-4 py-2 rounded-lg bg-amber-400/90 text-black hover:bg-amber-400 disabled:opacity-60"
                 >
-                  {busy ? "Opening…" : "Upgrade to Pro"}
+                  {busy ? "Opening…" : upgradeToProCta}
                 </button>
                 <button
                   onClick={openBillingPortal}

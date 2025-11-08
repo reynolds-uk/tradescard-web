@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
+import { useJoinModal } from "@/components/JoinModalContext";
 import { track } from "@/lib/track";
 
 type Tier = "access" | "member" | "pro";
@@ -32,6 +33,10 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://tradescard-api.vercel.app";
 
+// --- Trial flags (match Account page)
+const TRIAL = process.env.NEXT_PUBLIC_TRIAL_ACTIVE === "true";
+const TRIAL_COPY = process.env.NEXT_PUBLIC_TRIAL_COPY || "Try Member for £1 (90 days)";
+
 const TIER_COPY: Record<Tier, { label: string; blurb: string }> = {
   access: {
     label: "ACCESS",
@@ -59,6 +64,7 @@ export default function WelcomePage() {
       ),
     []
   );
+  const { openJoin } = useJoinModal();
 
   const [me, setMe] = useState<Me | null>(null);
   const [copyOk, setCopyOk] = useState(false);
@@ -71,7 +77,6 @@ export default function WelcomePage() {
       try {
         setErr("");
 
-        // get session → account
         const { data } = await supabase.auth.getSession();
         const user = data?.session?.user ?? null;
 
@@ -119,12 +124,21 @@ export default function WelcomePage() {
   const cardLabel = me ? TIER_COPY[tier].label : "ACCESS";
   const blurb = me ? TIER_COPY[tier].blurb : TIER_COPY.access.blurb;
 
+  // Trial-aware CTA text for Access users
+  const accessCta = TRIAL ? TRIAL_COPY : "Become a Member (£2.99/mo)";
+
   return (
     <Container>
       <PageHeader
         title="Welcome to TradesCard"
         subtitle="Here’s your card and the quickest next steps to start getting value."
       />
+
+      {TRIAL && (
+        <div className="mb-4 rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-200">
+          Limited-time offer: {TRIAL_COPY}
+        </div>
+      )}
 
       {err && (
         <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 p-3 text-red-300">
@@ -187,12 +201,16 @@ export default function WelcomePage() {
                   See your benefits
                 </a>
               ) : (
-                <a
-                  href="/join"
-                  className="block rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 text-center hover:bg-neutral-800"
+                <button
+                  onClick={() => {
+                    track("welcome_cta_join_member", { trial: TRIAL });
+                    // Open unified modal with intent "member"
+                    openJoin("member");
+                  }}
+                  className="block w-full rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 text-center hover:bg-neutral-800"
                 >
-                  Become a Member
-                </a>
+                  {accessCta}
+                </button>
               )}
 
               {tier !== "access" && (
@@ -209,20 +227,23 @@ export default function WelcomePage() {
         </div>
       </div>
 
-      {/* Soft reminder about upgrades for ACCESS users */}
+      {/* Soft reminder for ACCESS users */}
       {tier === "access" && (
         <div className="mt-6 rounded-xl border border-amber-400/30 bg-amber-400/10 p-4">
           <div className="font-medium mb-1">Unlock more with membership</div>
           <p className="text-sm text-neutral-200">
-            Upgrade to <span className="font-semibold">Member</span> for core protection and{" "}
-            monthly rewards, or go <span className="font-semibold">Pro</span> for even more.
+            Upgrade to <span className="font-semibold">Member</span> for core protection and monthly
+            rewards, or go <span className="font-semibold">Pro</span> for even more.
           </p>
-          <a
-            href="/join"
+          <button
+            onClick={() => {
+              track("welcome_cta_join_member_banner", { trial: TRIAL });
+              openJoin("member");
+            }}
             className="mt-3 inline-block rounded bg-amber-400 text-black px-4 py-2 font-medium"
           >
-            See options
-          </a>
+            {accessCta}
+          </button>
         </div>
       )}
     </Container>

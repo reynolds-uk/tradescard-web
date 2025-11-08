@@ -1,33 +1,40 @@
+// app/components/JoinModal.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 type Props = {
   open: boolean;
   onClose: () => void;
+
+  // Callbacks (parent decides what to do; e.g. call /api/checkout with promotion hint)
   onJoinFree: () => void;
   onMember: () => Promise<void>;
   onPro: () => Promise<void>;
-  busy?: boolean;
-  /** Only real errors from checkout/portal should be passed in here */
-  error?: string;
+
+  busy?: boolean;            // external async state (checkout/portal)
+  error?: string;            // only real errors from checkout/portal
+
+  // Optional promotion / trial decoration (purely visual here)
+  trialActive?: boolean;     // e.g. process.env.NEXT_PUBLIC_TRIAL_ACTIVE === "true"
+  trialLabel?: string;       // short tag near price, e.g. "£1 for 90 days"
+  trialMessage?: ReactNode;  // longer copy above plans; accepts JSX
 };
 
-function Badge({ children }: { children: string }) {
+function Badge({ children }: { children: ReactNode }) {
   return (
-    <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs">
-      {children}
-    </span>
+    <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs">{children}</span>
   );
 }
 
-type NoticeProps = {
+function Notice({
+  tone = "info",
+  children,
+}: {
   tone?: "info" | "success" | "error";
-  children: ReactNode; // <-- allow rich content
-};
-
-function Notice({ tone = "info", children }: NoticeProps) {
+  children: ReactNode;
+}) {
   const tones = {
     info: "border-amber-400/40 bg-amber-400/10 text-amber-200",
     success: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
@@ -48,6 +55,9 @@ export default function JoinModal({
   onPro,
   busy = false,
   error,
+  trialActive = process.env.NEXT_PUBLIC_TRIAL_ACTIVE === "true",
+  trialLabel = process.env.NEXT_PUBLIC_TRIAL_LABEL || "Intro offer",
+  trialMessage,
 }: Props) {
   const supabase = useMemo<SupabaseClient | null>(() => {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -138,7 +148,7 @@ export default function JoinModal({
     >
       {/* backdrop */}
       <button
-        aria-label="Close"
+        aria-label="Close dialog"
         onClick={onClose}
         className="absolute inset-0 bg-black/60"
       />
@@ -158,9 +168,21 @@ export default function JoinModal({
           Pick a plan for protection, early deals and rewards — or join free and upgrade any time.
         </p>
 
+        {/* Trial / promotion banner (optional) */}
+        {trialActive && (
+          <Notice tone="info">
+            {trialMessage ?? (
+              <>
+                <strong>Intro offer:</strong> special pricing is available for new&nbsp;Members.
+                You can switch or cancel any time.
+              </>
+            )}
+          </Notice>
+        )}
+
         {/* Email capture (visible when not signed in). Always available at the top */}
         {!signedIn && (
-          <div className="mt-3">
+          <div className="mt-3" aria-live="polite">
             <label htmlFor="join-email" className="sr-only">
               Email address
             </label>
@@ -174,10 +196,11 @@ export default function JoinModal({
                 className="flex-1 rounded border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm"
                 inputMode="email"
                 autoComplete="email"
+                disabled={sending || busy}
               />
               <button
                 onClick={sendMagic}
-                disabled={sending}
+                disabled={sending || busy}
                 className="rounded bg-neutral-200 text-neutral-900 text-sm px-3 py-2 disabled:opacity-60"
               >
                 {sending ? "Sending…" : "Send sign-in link"}
@@ -186,11 +209,14 @@ export default function JoinModal({
             {emailErr && <Notice tone="error">{emailErr}</Notice>}
             {sentTo && (
               <Notice tone="success">
-                Magic link sent to <strong>{sentTo}</strong>. Open it on this device, then return here to continue.
+                Magic link sent to <strong>{sentTo}</strong>. Open it on this device, then return
+                here to continue.
               </Notice>
             )}
             {!emailErr && !sentTo && (
-              <Notice tone="info">Enter your email to get a sign-in link. Then choose your plan.</Notice>
+              <Notice tone="info">
+                Enter your email to get a sign-in link. Then choose your plan.
+              </Notice>
             )}
           </div>
         )}
@@ -201,7 +227,10 @@ export default function JoinModal({
           {/* Member */}
           <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-4">
             <div className="flex items-center justify-between">
-              <div className="font-medium">Member</div>
+              <div className="font-medium flex items-center gap-2">
+                <span>Member</span>
+                {trialActive && <Badge>{trialLabel}</Badge>}
+              </div>
               <div className="text-sm text-neutral-400">£2.99/mo</div>
             </div>
             <ul className="mt-2 text-sm text-neutral-300 space-y-1">
@@ -215,7 +244,7 @@ export default function JoinModal({
               disabled={busy}
               className="mt-3 inline-block rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm hover:bg-neutral-800 disabled:opacity-60"
             >
-              {busy ? "Opening…" : signedIn ? "Choose Member" : "Sign in then continue"}
+              {busy ? "Opening…" : signedIn ? (trialActive ? "Start trial" : "Choose Member") : "Sign in then continue"}
             </button>
           </div>
 
@@ -250,7 +279,8 @@ export default function JoinModal({
             </p>
             <button
               onClick={() => (signedIn ? onJoinFree() : sendMagic())}
-              className="mt-3 inline-block rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm hover:bg-neutral-800"
+              disabled={busy || sending}
+              className="mt-3 inline-block rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-2 text-sm hover:bg-neutral-800 disabled:opacity-60"
             >
               {signedIn ? "Continue free" : sending ? "Sending…" : "Sign in / Join free"}
             </button>
@@ -258,7 +288,7 @@ export default function JoinModal({
         </div>
 
         <div className="mt-4 text-[12px] text-neutral-500">
-          No purchase necessary. Free postal entry route is available on public promo pages.
+          No purchase necessary. A free postal entry route is available on public promo pages.
           Paid and free routes are treated equally in draws.
         </div>
       </div>
