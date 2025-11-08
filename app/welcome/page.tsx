@@ -51,7 +51,6 @@ const TIER_COPY: Record<Tier, { label: string; blurb: string }> = {
 };
 
 export default function WelcomePage() {
-  // Supabase client (browser)
   const supabase = useMemo(
     () =>
       createClient(
@@ -62,7 +61,6 @@ export default function WelcomePage() {
   );
 
   const [me, setMe] = useState<Me | null>(null);
-  const [loading, setLoading] = useState(true);
   const [copyOk, setCopyOk] = useState(false);
   const [err, setErr] = useState("");
 
@@ -72,7 +70,6 @@ export default function WelcomePage() {
     (async () => {
       try {
         setErr("");
-        setLoading(true);
 
         // get session → account
         const { data } = await supabase.auth.getSession();
@@ -80,7 +77,6 @@ export default function WelcomePage() {
 
         if (!user) {
           setMe(null);
-          setLoading(false);
           return;
         }
 
@@ -103,8 +99,6 @@ export default function WelcomePage() {
         });
       } catch (e) {
         setErr(e instanceof Error ? e.message : "Something went wrong");
-      } finally {
-        setLoading(false);
       }
     })();
   }, [supabase]);

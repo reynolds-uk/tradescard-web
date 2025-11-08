@@ -1,4 +1,4 @@
-// lib/track.ts
+// app/lib/track.ts
 export type TrackEvent =
   | "welcome_view"
   | "welcome_cta_offers"
@@ -6,6 +6,11 @@ export type TrackEvent =
   | "welcome_cta_rewards"
   | "welcome_copy_card";
 
-export function track(_event: TrackEvent, _meta?: Record<string, string | number>) {
-  // no-op for now; swap for PostHog/GA later
+/**
+ * Stub analytics tracker. Wire this to PostHog/GA later.
+ */
+export function track(event: TrackEvent, meta?: Record<string, string | number>) {
+  // mark params as intentionally used to satisfy no-unused-vars
+  void event;
+  void meta;
 }
