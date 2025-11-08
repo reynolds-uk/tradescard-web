@@ -16,8 +16,8 @@ type Benefit = {
   id: string;
   title: string;
   description?: string | null;
-  tier?: Tier | string;     // required tier for eligibility
-  link?: string | null;     // “How to use” or instructions
+  tier?: Tier | string;   // required tier
+  link?: string | null;   // “How to use”
   is_active?: boolean;
   priority?: number;
 };
@@ -29,9 +29,7 @@ const API_BASE =
 
 const TIER_ORDER: Record<Tier, number> = { access: 0, member: 1, pro: 2 };
 
-/* -------------------------
-   UI atoms
---------------------------*/
+/* UI atoms */
 function Pill({
   children,
   tone = "muted",
@@ -41,8 +39,7 @@ function Pill({
   tone?: "muted" | "ok" | "warn";
   className?: string;
 }) {
-  const base =
-    "rounded px-2 py-0.5 text-[11px] leading-none inline-flex items-center gap-1";
+  const base = "rounded px-2 py-0.5 text-[11px] leading-none inline-flex items-center gap-1";
   const cls =
     tone === "ok"
       ? "bg-green-900/30 text-green-300"
@@ -78,12 +75,10 @@ function SkeletonCard() {
   );
 }
 
-/* -------------------------
-   Page
---------------------------*/
+/* Page */
 export default function BenefitsPage() {
-  const me = useMe();                          // { user?, email?, tier, status, ready? }
-  const ready = useMeReady();                // avoid logged-out → in flash
+  const me = useMe();                 // { user?, email?, tier, status }
+  const ready = useMeReady();         // avoid logged-out → in flash
   const showTrial = shouldShowTrial(me);
 
   const tier: Tier = (me?.tier as Tier) ?? "access";
@@ -97,31 +92,22 @@ export default function BenefitsPage() {
 
   const [detail, setDetail] = useState<Benefit | null>(null);
 
-  // Upgrade routing (no modal, preserves intent)
+  // Upgrade routing (no modal)
   const goUpgrade = () => {
-    if (!isActivePaid) {
-      routeToJoin("member");
-      return;
-    }
-    if (tier === "member") {
-      routeToJoin("pro");
-    }
+    if (!isActivePaid) return routeToJoin("member");
+    if (tier === "member") return routeToJoin("pro");
   };
 
-  // Load catalogue once auth state is known
+  // Load list after auth settled
   useEffect(() => {
     if (!ready) return;
-
     let aborted = false;
     (async () => {
       try {
         setLoading(true);
         setErr("");
-
-        // One list is fine (server returns required tier per benefit)
         const res = await fetch(`${API_BASE}/api/benefits`, { cache: "no-store" });
         if (!res.ok) throw new Error(`benefits ${res.status}`);
-
         const list: Benefit[] = await res.json();
 
         const sorted = [...list].sort((a, b) => {
@@ -130,7 +116,6 @@ export default function BenefitsPage() {
           if (ap !== bp) return bp - ap;
           return (a.title || "").localeCompare(b.title || "");
         });
-
         if (!aborted) setBenefits(sorted);
       } catch (e) {
         if (!aborted) setErr(e instanceof Error ? e.message : "Something went wrong");
@@ -138,13 +123,12 @@ export default function BenefitsPage() {
         if (!aborted) setLoading(false);
       }
     })();
-
     return () => {
       aborted = true;
     };
   }, [ready]);
 
-  // Segment by eligibility (once auth/benefits are ready)
+  // Split eligible vs locked
   const { eligible, locked } = useMemo(() => {
     const yes: Benefit[] = [];
     const no: Benefit[] = [];
@@ -170,38 +154,41 @@ export default function BenefitsPage() {
     return "Built-in protection and support for paid members. Join to unlock benefits.";
   }, [ready, isActivePaid]);
 
-  /* -------------------------
-     Render
-  --------------------------*/
   return (
     <Container>
       <PageHeader
         title="Benefits"
         subtitle={subtitle}
         aside={
-          ready ? (
-            isActivePaid ? (
-              <div className="flex items-center gap-2 text-sm">
-                <TierTag tier={tier} />
-                <Pill tone={me!.status === "active" ? "ok" : "warn"}>{me!.status}</Pill>
-              </div>
-            ) : showTrial ? (
-              <span className="hidden sm:inline rounded border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-200">
-                {TRIAL_COPY}
-              </span>
-            ) : null
-          ) : null
+          ready
+            ? isActivePaid
+              ? (
+                <div className="flex items-center gap-2 text-sm">
+                  <TierTag tier={tier} />
+                  <Pill tone={me?.status === "active" ? "ok" : "warn"}>{me?.status}</Pill>
+                </div>
+              )
+              : showTrial
+              ? (
+                <span className="hidden sm:inline rounded border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-200">
+                  {TRIAL_COPY}
+                </span>
+              )
+              : null
+            : null
         }
       />
 
-      {/* Current plan banner (only when we know the state) */}
+      {/* Current plan banner (only when settled) */}
       {ready && me && (
         <div className="mb-4 rounded-xl border border-neutral-800 bg-neutral-950 p-4 flex items-center justify-between gap-3">
           <div className="text-sm">
             <div className="font-medium">
               You’re on <span className="underline">{tier.toUpperCase()}</span>.
             </div>
-            <div className="text-neutral-400">Downgrading removes paid benefits from your plan.</div>
+            <div className="text-neutral-400">
+              Downgrading removes paid benefits from your plan.
+            </div>
           </div>
 
           {tier !== "pro" && (
@@ -366,7 +353,7 @@ export default function BenefitsPage() {
         </>
       )}
 
-      {/* Simple detail drawer for “How to use” */}
+      {/* “How to use” drawer */}
       {detail && (
         <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
           <button

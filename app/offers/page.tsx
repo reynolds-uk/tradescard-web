@@ -22,27 +22,25 @@ type Tier = "access" | "member" | "pro";
 
 export default function OffersPage() {
   // Auth/membership
-  const me = useMe();                // { user, tier, status, ready? }
-  const ready = useMeReady();      // prevents UI flash until we know auth
+  const me = useMe();                 // { user, tier, status }
+  const ready = useMeReady();         // prevent logged-out ➜ in flicker
   const tier: Tier = (me?.tier as Tier) ?? "access";
   const isPaidTier = tier === "member" || tier === "pro";
   const isActivePaid = isPaidTier && (me?.status === "active" || me?.status === "trialing");
   const isLoggedIn = !!me?.user;
   const showTrial = shouldShowTrial(me);
 
-  // Where to bounce back after auth/checkout
+  // Where to bounce back after checkout/auth
   const next = "/offers";
   const { busy, error, startMembership } = useJoinActions(next);
 
-  // Offers
+  // Offers list
   const [items, setItems] = useState<Offer[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchErr, setFetchErr] = useState<string>("");
 
   useEffect(() => {
     let aborted = false;
-
-    // Only fetch once we know whether user is eligible (avoids loading the wrong set then swapping)
     if (!ready) return;
 
     (async () => {
@@ -50,7 +48,7 @@ export default function OffersPage() {
         setLoading(true);
         setFetchErr("");
 
-        // Eligible members get the full catalogue; everyone else sees public/teaser
+        // Paid gets all offers; others see public teaser
         const url = isActivePaid
           ? `${API_BASE}/api/offers`
           : `${API_BASE}/api/offers?visibility=access`;
@@ -111,12 +109,11 @@ export default function OffersPage() {
     return "A taste of the savings available. Join free or pick a plan to unlock full access.";
   }, [ready, isActivePaid, isLoggedIn]);
 
-  // Skeleton until auth is resolved to avoid flash
   const showSkeleton = !ready || loading;
 
   return (
     <>
-      {/* Sticky mobile CTA for non-eligible only */}
+      {/* Sticky mobile CTA (only when not eligible and auth is ready) */}
       {!isActivePaid && ready && (
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70 md:hidden">
           <div className="mx-auto max-w-5xl px-4 py-3 flex items-center justify-between gap-2">
@@ -164,7 +161,7 @@ export default function OffersPage() {
           </div>
         )}
 
-        {/* Upgrade nudge for Access / inactive users */}
+        {/* Upgrade nudge (only when not eligible and ready) */}
         {!isActivePaid && ready && (
           <div className="mb-4 rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -212,10 +209,8 @@ export default function OffersPage() {
                   key={o.id}
                   offer={o}
                   onRedeem={() => redeem(o)}
-                  // Let the card compute lock state
-                  userTier={tier}
-                  activePaid={isActivePaid}
-                  // Optional teaser override for unauthenticated/Access visitors
+                  userTier={tier}           // ← lets the card hide "PUBLIC" for paid users
+                  activePaid={isActivePaid} // ← paid members never see locked/teaser states
                   ctaLabel={
                     !isActivePaid
                       ? showTrial
@@ -231,7 +226,7 @@ export default function OffersPage() {
           </div>
         )}
 
-        {/* Secondary nudge (desktop only) */}
+        {/* Secondary nudge (desktop) */}
         {!isActivePaid && ready && (
           <div className="mt-6 hidden md:flex items-center justify-between rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
             <div className="text-sm text-neutral-300">Ready to unlock the full catalogue?</div>
