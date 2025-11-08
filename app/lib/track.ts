@@ -1,5 +1,4 @@
 // app/lib/track.ts
-
 export type TrackEvent =
   | "welcome_view"
   | "welcome_copy_card"
@@ -7,16 +6,24 @@ export type TrackEvent =
   | "welcome_cta_benefits"
   | "welcome_cta_rewards"
   | "welcome_cta_join_member"
-  | "welcome_cta_join_member_banner";
+  | "welcome_cta_join_member_banner"
+  | "nav_upgrade_click"
+  | "offers_list_loaded"
+  | "offer_click"                // <-- added
+  | "offer_redeem_click"         // <-- useful: successful redemption click
+  | "offers_gate_open"           // <-- useful: opened join modal from offers
+  | "join_free"
+  | "checkout_start_member"
+  | "checkout_start_pro";
 
-export function track(
-  event: TrackEvent,
-  meta?: Record<string, string | number | boolean | null>
-) {
-  if (typeof window === "undefined") return;
+export function track(name: TrackEvent, props?: Record<string, unknown>) {
   try {
-    window.dispatchEvent(new CustomEvent("tc:track", { detail: { event, meta } }));
+    // no-op stub; wire to your analytics later
+    if (typeof window !== "undefined") {
+      // eslint-disable-next-line no-console
+      console.debug("[track]", name, props ?? {});
+    }
   } catch {
-    /* no-op */
+    /* ignore */
   }
 }
