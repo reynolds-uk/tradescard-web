@@ -8,6 +8,7 @@ import PageHeader from "@/components/PageHeader";
 import { useMe } from "@/lib/useMe";
 import { useMeReady } from "@/lib/useMeReady";
 import { routeToJoin } from "@/lib/routeToJoin";
+import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 import PromoBenefits from "@/components/promo/PromoBenefits";
 
 type Tier = "access" | "member" | "pro";
@@ -27,7 +28,7 @@ export default function BenefitsPage() {
     if (ready && isPaid) router.replace("/member/benefits");
   }, [ready, isPaid, router]);
 
-  // While we redirect, show a lightweight placeholder to avoid flicker
+  // While redirecting, show a lightweight placeholder to avoid flicker
   if (ready && isPaid) {
     return (
       <Container>
@@ -41,6 +42,7 @@ export default function BenefitsPage() {
     <PromoBenefits
       onJoin={() => routeToJoin("member")}
       onPro={() => routeToJoin("pro")}
+      trialCopy={shouldShowTrial(me) ? TRIAL_COPY : undefined}
     />
   );
 }
