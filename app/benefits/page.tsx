@@ -152,7 +152,7 @@ export default function BenefitsPage() {
   const subtitle = useMemo(() => {
     if (!ready) return "Loading your benefits…";
     if (isActivePaid) return "Your membership includes the benefits below. Upgrade to unlock more.";
-    return "Built-in protection and support for paid members. Join to unlock benefits.";
+    return "Built-in protection and support for paid members.";
   }, [ready, isActivePaid]);
 
   return (
@@ -180,7 +180,7 @@ export default function BenefitsPage() {
         }
       />
 
-      {/* Current plan banner (only when SIGNED IN) */}
+      {/* Signed-in Access note (never show to logged-out visitors) */}
       {ready && isLoggedIn && !isActivePaid && (
         <div className="mb-4 rounded-xl border border-neutral-800 bg-neutral-950 p-4 flex items-center justify-between gap-3">
           <div className="text-sm">
@@ -212,23 +212,17 @@ export default function BenefitsPage() {
 
       {!loading && ready && (
         <>
-          {/* PROMO HERO for non-paid (logged out OR Access) */}
+          {/* PROMO for non-paid (single CTA; no “Join free”) */}
           {!isActivePaid && (
-            <div className="mb-5 rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
-              <div className="font-medium mb-1">What you get as a paid member</div>
+            <div className="mb-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+              <div className="font-medium mb-2">Why go Member</div>
               <ul className="list-disc list-inside text-neutral-300 space-y-1 text-sm">
-                <li>Protect Lite benefits (GP, wellbeing & support).</li>
+                <li>Protect Lite benefits: GP, wellbeing & confidential support.</li>
                 <li>Member-only help line and partner perks.</li>
-                <li>Monthly prize entries (boosted in Pro).</li>
-                <li>Digital card, with more coming soon.</li>
+                <li>Monthly prize entries (boosted further in Pro).</li>
+                <li>Digital card with more coming soon.</li>
               </ul>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  onClick={() => routeToJoin()}
-                  className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm hover:bg-neutral-800"
-                >
-                  Join free
-                </button>
+              <div className="mt-4">
                 <PrimaryButton onClick={() => routeToJoin("member")}>
                   {showTrial ? TRIAL_COPY : "Become a Member"}
                 </PrimaryButton>
@@ -236,7 +230,7 @@ export default function BenefitsPage() {
             </div>
           )}
 
-          {/* INCLUDED (only meaningful for paid members) */}
+          {/* INCLUDED (only shown for paid members) */}
           {isActivePaid && (
             <section className="mb-6">
               <div className="mb-3 flex items-end justify-between gap-2">
@@ -277,7 +271,7 @@ export default function BenefitsPage() {
             </section>
           )}
 
-          {/* UPGRADE GRID (always visible for context) */}
+          {/* LOCKED grid — minimal CTA to avoid clutter */}
           <section>
             <div className="mb-3 flex items-end justify-between gap-2">
               <h2 className="text-sm font-medium text-neutral-300">
@@ -285,12 +279,9 @@ export default function BenefitsPage() {
                 <span className="ml-2 text-xs text-neutral-500">({locked.length})</span>
               </h2>
               {locked.length > 0 && (
-                <button
-                  onClick={goUpgrade}
-                  className="text-sm underline underline-offset-4 hover:opacity-90"
-                >
-                  {!isActivePaid ? "Become a Member" : "Upgrade to Pro"}
-                </button>
+                <PrimaryButton onClick={goUpgrade}>
+                  {isActivePaid ? "Upgrade to Pro" : showTrial ? TRIAL_COPY : "Become a Member"}
+                </PrimaryButton>
               )}
             </div>
 
@@ -302,7 +293,7 @@ export default function BenefitsPage() {
                     tier === "member" && required === "pro"
                       ? "Upgrade to Pro"
                       : !isActivePaid
-                      ? "Join to unlock"
+                      ? showTrial ? TRIAL_COPY : "Become a Member"
                       : "Upgrade to unlock";
 
                   return (
@@ -322,18 +313,23 @@ export default function BenefitsPage() {
                       )}
                       <div className="mt-3">
                         {nextCta === "Upgrade to Pro" ? (
-                          <PrimaryButton onClick={goUpgrade}>Upgrade to Pro</PrimaryButton>
-                        ) : nextCta === "Join to unlock" ? (
-                          <PrimaryButton onClick={() => routeToJoin("member")}>
-                            {showTrial ? TRIAL_COPY : "Join to unlock"}
-                          </PrimaryButton>
-                        ) : (
                           <button
                             onClick={goUpgrade}
                             className="text-sm underline underline-offset-4 hover:opacity-90"
                           >
-                            {nextCta}
+                            Upgrade to Pro
                           </button>
+                        ) : nextCta === "Upgrade to unlock" ? (
+                          <button
+                            onClick={goUpgrade}
+                            className="text-sm underline underline-offset-4 hover:opacity-90"
+                          >
+                            Upgrade to unlock
+                          </button>
+                        ) : (
+                          <PrimaryButton onClick={() => routeToJoin("member")}>
+                            {nextCta}
+                          </PrimaryButton>
                         )}
                       </div>
                       <div className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-inset ring-neutral-800/60" />
