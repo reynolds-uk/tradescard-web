@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
-import HeaderAuth from "../header-client";
+import { useJoinModal } from "@/components/JoinModalContext";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -31,7 +31,7 @@ type Me = {
   tier: Tier;
   status: string;
   renewal_date: string | null;
-  joined_at?: string | null; // from Supabase auth
+  joined_at?: string | null;
 };
 
 type RewardsSummary = {
@@ -49,7 +49,7 @@ function Badge({
   children,
   tone = "muted",
 }: {
-  children: string;
+  children: string | number;
   tone?: "ok" | "warn" | "bad" | "muted";
 }) {
   const map = {
@@ -66,6 +66,7 @@ export default function AccountPage() {
     () => createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!),
     []
   );
+  const { openJoin } = useJoinModal();
 
   const abortRef = useRef<AbortController | null>(null);
   const actionsRef = useRef<HTMLDivElement | null>(null);
@@ -111,7 +112,7 @@ export default function AccountPage() {
     });
     if (!accRes.ok) throw new Error(`/api/account failed: ${accRes.status}`);
     const acc: ApiAccount = await accRes.json();
-    setMe(mapToMe(acc, user?.created_at ?? null));
+    setMe(mapToMe(acc, (user as { created_at?: string }).created_at ?? null));
 
     // Rewards summary
     const rw = await fetch(
@@ -133,7 +134,7 @@ export default function AccountPage() {
     (async () => {
       try {
         setLoading(true);
-        // scrub noisy params
+        // Clean noisy params (Stripe/auth)
         try {
           const url = new URL(window.location.href);
           if (["status", "success", "canceled", "auth_error"].some((k) => url.searchParams.has(k))) {
@@ -169,7 +170,8 @@ export default function AccountPage() {
       setError("");
       const user = await currentUser();
       if (!user) {
-        alert("Please sign in first using the form on this page.");
+        // Open the unified Join modal in Access mode to capture email and continue
+        openJoin(plan);
         return;
       }
       const res = await fetch(`${API_BASE}/api/checkout`, {
@@ -178,7 +180,7 @@ export default function AccountPage() {
         body: JSON.stringify({ user_id: user.id, email: user.email, plan }),
         keepalive: true,
       });
-      const json = await res.json().catch(() => ({}));
+      const json = await res.json().catch(() => ({} as { url?: string; error?: string }));
       if (!res.ok || !json.url) throw new Error(json?.error || "Checkout failed");
       window.location.href = json.url;
     } catch (e) {
@@ -194,7 +196,7 @@ export default function AccountPage() {
       setError("");
       const user = await currentUser();
       if (!user) {
-        alert("Please sign in first.");
+        openJoin("access");
         return;
       }
       const res = await fetch(`${API_BASE}/api/stripe/portal`, {
@@ -202,7 +204,7 @@ export default function AccountPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: user.id }),
       });
-      const json = await res.json().catch(() => ({}));
+      const json = await res.json().catch(() => ({} as { url?: string; error?: string }));
       if (!res.ok || !json?.url) throw new Error(json?.error || `Portal failed (${res.status})`);
       window.location.href = json.url;
     } catch (e) {
@@ -228,7 +230,7 @@ export default function AccountPage() {
     }
   };
 
-  // ---------- UI helpers
+  // UI helpers
   const statusBadge = (status: string) => {
     if (status === "active") return <Badge tone="ok">active</Badge>;
     if (status === "trialing") return <Badge tone="warn">trialing</Badge>;
@@ -245,7 +247,6 @@ export default function AccountPage() {
   const canDowngrade = me?.status !== "canceled" && me?.tier === "pro";
   const isActive = me?.status === "active" || me?.status === "trialing";
 
-  // ---------- Render
   return (
     <Container>
       <PageHeader
@@ -270,12 +271,17 @@ export default function AccountPage() {
 
       {/* Logged out */}
       {!loading && !me && (
-        <div className="space-y-4">
-          <div className="rounded-xl border border-neutral-800 p-5 bg-neutral-900/60">
-            <p className="font-medium mb-2">You’re not signed in.</p>
-            <p className="text-neutral-400 mb-3">Enter your email to get a magic sign-in link.</p>
-            <HeaderAuth />
-          </div>
+        <div className="rounded-xl border border-neutral-800 p-5 bg-neutral-900/60">
+          <p className="font-medium mb-2">You’re not signed in.</p>
+          <p className="text-neutral-400 mb-3">
+            Use your email to get a magic sign-in link. No password needed.
+          </p>
+          <button
+            onClick={() => openJoin("access")}
+            className="rounded-lg bg-amber-400 text-black px-4 py-2 font-medium hover:opacity-90"
+          >
+            Sign in / Join
+          </button>
         </div>
       )}
 
@@ -300,7 +306,7 @@ export default function AccountPage() {
             </div>
           )}
 
-          {/* My TradesCard (virtual card) */}
+          {/* Virtual card */}
           <section className="rounded-2xl border border-neutral-800 p-5 bg-gradient-to-br from-neutral-900 to-neutral-950">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -311,7 +317,6 @@ export default function AccountPage() {
                   {statusBadge(me.status)}
                 </div>
               </div>
-              {/* Placeholder for QR / Wallet (future) */}
               <div className="rounded-lg border border-dashed border-neutral-700 px-3 py-2 text-xs text-neutral-400">
                 QR / Wallet coming soon
               </div>
@@ -354,7 +359,7 @@ export default function AccountPage() {
             </div>
           </section>
 
-          {/* Rewards eligibility / impact */}
+          {/* Rewards eligibility */}
           <section className="rounded-xl border border-neutral-800 p-5">
             <div className="flex items-center justify-between">
               <div className="font-medium">Rewards eligibility</div>
@@ -386,7 +391,7 @@ export default function AccountPage() {
             </p>
           </section>
 
-          {/* Actions: clear, transparent */}
+          {/* Plan actions */}
           <section
             ref={actionsRef}
             className={`rounded-xl border border-neutral-800 p-5 ${pulseActions ? "animate-pulse" : ""}`}
@@ -468,7 +473,7 @@ export default function AccountPage() {
             </p>
           </section>
 
-          {/* Safety + exit */}
+          {/* Sign out */}
           <div className="flex justify-end">
             <button
               onClick={signOut}
