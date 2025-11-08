@@ -2,10 +2,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
-import { useJoinModal } from "@/components/JoinModalContext";
+import PrimaryButton from "@/components/PrimaryButton";
+import { useMe } from "@/lib/useMe";
+import { routeToJoin } from "@/lib/routeToJoin";
+import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 
 type Tier = "access" | "member" | "pro";
 type Benefit = {
@@ -16,13 +18,6 @@ type Benefit = {
   link?: string | null;
   is_active?: boolean;
   priority?: number;
-};
-
-type Me = {
-  user_id: string;
-  email: string;
-  tier: Tier;
-  status: string;
 };
 
 const API_BASE =
@@ -79,87 +74,43 @@ function SkeletonCard() {
 }
 
 export default function BenefitsPage() {
-  const { openJoin } = useJoinModal();
+  const me = useMe(); // { user?, email?, tier, status, ready }
+  const showTrial = shouldShowTrial(me);
 
-  const supabase = useMemo(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
-    []
+  const isActivePaid =
+    !!me && me.tier !== "access" && (me.status === "active" || me.status === "trialing");
+  const tierIndex: number = useMemo(
+    () => TIER_ORDER[(me?.tier as Tier) ?? "access"],
+    [me?.tier]
   );
 
-  const [me, setMe] = useState<Me | null>(null);
   const [benefits, setBenefits] = useState<Benefit[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string>("");
 
   const [detail, setDetail] = useState<Benefit | null>(null);
 
-  const isActivePaid =
-    !!me && me.tier !== "access" && (me.status === "active" || me.status === "trialing");
-  const tierIndex = me ? TIER_ORDER[me.tier] : 0;
-
-  // Unified upgrade action (modal for access, account page for member)
+  // Upgrade routing (no modal)
   const goUpgrade = () => {
-    if (!me || me.tier === "access") {
-      openJoin("member");
-      return;
-    }
-    if (me.tier === "member") {
-      window.location.href = "/account#upgrade";
-    }
+    if (!isActivePaid) return routeToJoin("member");
+    if (me?.tier === "member") return routeToJoin("pro");
   };
 
   useEffect(() => {
     let aborted = false;
-
     (async () => {
-      setLoading(true);
-      setErr("");
       try {
-        // Who am I?
-        const { data } = await supabase.auth.getSession();
-        const user = data?.session?.user ?? null;
-
-        if (user) {
-          const r = await fetch(
-            `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
-            { cache: "no-store" }
-          );
-          if (r.ok) {
-            const a = await r.json();
-            const t = (a?.members?.tier as Tier) ?? "access";
-            const s = a?.members?.status ?? (t === "access" ? "free" : "inactive");
-            if (!aborted) {
-              setMe({
-                user_id: a?.user_id ?? user.id,
-                email: a?.email,
-                tier: t,
-                status: s,
-              });
-            }
-          } else if (!aborted) {
-            setMe(null);
-          }
-        } else if (!aborted) {
-          setMe(null);
-        }
-
-        // Benefits catalogue
-        const b = await fetch(`${API_BASE}/api/benefits`, { cache: "no-store" });
-        if (!b.ok) throw new Error(`benefits ${b.status}`);
-        const list: Benefit[] = await b.json();
-
-        // Sort by priority desc, then title
+        setLoading(true);
+        setErr("");
+        const res = await fetch(`${API_BASE}/api/benefits`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`benefits ${res.status}`);
+        const list: Benefit[] = await res.json();
         const sorted = [...list].sort((a, b) => {
           const ap = a.priority ?? 0;
           const bp = b.priority ?? 0;
           if (ap !== bp) return bp - ap;
           return (a.title || "").localeCompare(b.title || "");
         });
-
         if (!aborted) setBenefits(sorted);
       } catch (e) {
         if (!aborted) setErr(e instanceof Error ? e.message : "Something went wrong");
@@ -167,23 +118,22 @@ export default function BenefitsPage() {
         if (!aborted) setLoading(false);
       }
     })();
-
     return () => {
       aborted = true;
     };
-  }, [supabase]);
+  }, []);
 
   // Split by eligibility
   const eligible: Benefit[] = [];
   const locked: Benefit[] = [];
   for (const b of benefits) {
-    const required = TIER_ORDER[(b.tier as Tier) ?? "member"];
-    const ok = isActivePaid && tierIndex >= required;
-    (ok ? eligible : locked).push(b);
+    const requiredTier = (b.tier as Tier) ?? "member";
+    const requiredIdx = TIER_ORDER[requiredTier];
+    const ok = isActivePaid && tierIndex >= requiredIdx;
+    (ok ? eligible : locked).push({ ...b, tier: requiredTier });
   }
 
   const onOpenHowTo = (b: Benefit) => {
-    // If there's a clear link, we can go directly; otherwise use the drawer
     if (b.link && /^https?:\/\//i.test(b.link)) {
       window.open(b.link, "_blank", "noopener,noreferrer");
       return;
@@ -191,43 +141,51 @@ export default function BenefitsPage() {
     setDetail(b);
   };
 
+  const subtitle = isActivePaid
+    ? "Your membership includes the benefits below. Upgrade to unlock more."
+    : "Built-in protection and support for paid members. Join to unlock benefits.";
+
   return (
     <Container>
       <PageHeader
         title="Benefits"
-        subtitle={
-          isActivePaid
-            ? "Your membership includes the benefits below. Upgrade to unlock more."
-            : "Built-in protection and support for paid members. Join to unlock benefits."
-        }
+        subtitle={subtitle}
         aside={
           isActivePaid ? (
             <div className="flex items-center gap-2 text-sm">
-              <TierTag tier={me!.tier} />
+              <TierTag tier={me!.tier as Tier} />
               <Pill tone={me!.status === "active" ? "ok" : "warn"}>{me!.status}</Pill>
             </div>
+          ) : showTrial ? (
+            <span className="hidden sm:inline rounded border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-200">
+              {TRIAL_COPY}
+            </span>
           ) : null
         }
       />
 
-      {/* Current plan banner + downgrade hint */}
+      {/* Current plan banner */}
       {me && (
         <div className="mb-4 rounded-xl border border-neutral-800 bg-neutral-950 p-4 flex items-center justify-between gap-3">
           <div className="text-sm">
             <div className="font-medium">
-              You’re on <span className="underline">{me.tier.toUpperCase()}</span>.
+              You’re on <span className="underline">{(me.tier as Tier).toUpperCase()}</span>.
             </div>
             <div className="text-neutral-400">
-              Downgrading will remove {me.tier !== "access" ? me.tier : "paid"} benefits.
+              Downgrading removes paid benefits from your plan.
             </div>
           </div>
+
           {me.tier !== "pro" && (
-            <button
-              onClick={goUpgrade}
-              className="rounded bg-amber-400/90 text-black px-3 py-2 text-sm hover:bg-amber-400"
-            >
-              {me.tier === "member" ? "Upgrade to Pro" : "Become a Member"}
-            </button>
+            <div className="flex items-center gap-2">
+              {me.tier === "member" ? (
+                <PrimaryButton onClick={goUpgrade}>Upgrade to Pro</PrimaryButton>
+              ) : (
+                <PrimaryButton onClick={goUpgrade}>
+                  {showTrial ? TRIAL_COPY : "Become a Member"}
+                </PrimaryButton>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -305,7 +263,7 @@ export default function BenefitsPage() {
                   onClick={goUpgrade}
                   className="text-sm underline underline-offset-4 hover:opacity-90"
                 >
-                  {(!me || me.tier === "access") ? "Become a Member" : "Upgrade to Pro"}
+                  {!isActivePaid ? "Become a Member" : "Upgrade to Pro"}
                 </button>
               )}
             </div>
@@ -317,7 +275,7 @@ export default function BenefitsPage() {
                   const nextCta =
                     me?.tier === "member" && required === "pro"
                       ? "Upgrade to Pro"
-                      : !me || me.tier === "access"
+                      : !isActivePaid
                       ? "Join to unlock"
                       : "Upgrade to unlock";
 
@@ -337,12 +295,20 @@ export default function BenefitsPage() {
                         <div className="mt-1 text-sm text-neutral-400">{b.description}</div>
                       )}
                       <div className="mt-3">
-                        <button
-                          onClick={goUpgrade}
-                          className="text-sm underline underline-offset-4 hover:opacity-90"
-                        >
-                          {nextCta}
-                        </button>
+                        {nextCta === "Upgrade to Pro" ? (
+                          <PrimaryButton onClick={goUpgrade}>Upgrade to Pro</PrimaryButton>
+                        ) : nextCta === "Join to unlock" ? (
+                          <PrimaryButton onClick={() => routeToJoin("member")}>
+                            {showTrial ? TRIAL_COPY : "Join to unlock"}
+                          </PrimaryButton>
+                        ) : (
+                          <button
+                            onClick={goUpgrade}
+                            className="text-sm underline underline-offset-4 hover:opacity-90"
+                          >
+                            {nextCta}
+                          </button>
+                        )}
                       </div>
                       <div className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-inset ring-neutral-800/60" />
                     </div>
@@ -357,19 +323,19 @@ export default function BenefitsPage() {
           </section>
 
           {/* Join nudge if totally free and nothing included */}
-          {eligible.length === 0 && (!me || me.tier === "access") && (
+          {eligible.length === 0 && !isActivePaid && (
             <div className="mt-6 rounded-xl border border-amber-400/30 bg-amber-400/10 p-5">
               <div className="font-medium mb-1">Benefits are for paid members</div>
               <p className="text-sm text-neutral-200">
                 Join as <span className="font-semibold">Member</span> for core protection and
                 support, or go <span className="font-semibold">Pro</span> for more.
               </p>
-              <button
-                onClick={() => openJoin("member")}
-                className="mt-3 inline-block rounded bg-amber-400 text-black px-4 py-2 font-medium"
+              <PrimaryButton
+                onClick={() => routeToJoin("member")}
+                className="mt-3"
               >
-                See membership options
-              </button>
+                {showTrial ? TRIAL_COPY : "See membership options"}
+              </PrimaryButton>
             </div>
           )}
         </>

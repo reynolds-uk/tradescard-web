@@ -5,7 +5,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
-import { useJoinModal } from "@/components/JoinModalContext";
+import PrimaryButton from "@/components/PrimaryButton";
+import { useMe } from "@/lib/useMe";
+import { routeToJoin } from "@/lib/routeToJoin";
+import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -25,7 +28,7 @@ type ApiAccount = {
   };
 };
 
-type Me = {
+type MeView = {
   user_id: string;
   email: string;
   name?: string | null;
@@ -46,10 +49,6 @@ const TIER_COPY: Record<Tier, { label: string; boost: string; priceShort: string
   pro: { label: "PRO", boost: "1.50×", priceShort: "£7.99" },
 };
 
-// ---- Intro offer flag (e.g. £1 / 90-day)
-const TRIAL = process.env.NEXT_PUBLIC_TRIAL_ACTIVE === "true";
-const TRIAL_COPY = process.env.NEXT_PUBLIC_TRIAL_COPY || "Try Member for £1 (90 days)";
-
 function Badge({
   children,
   tone = "muted",
@@ -67,6 +66,10 @@ function Badge({
 }
 
 export default function AccountPage() {
+  const me = useMe(); // { user?, email?, tier, status, ready }
+  const showTrial = shouldShowTrial(me);
+
+  // Supabase only for signOut()
   const supabase = useMemo(
     () =>
       createClient(
@@ -75,19 +78,18 @@ export default function AccountPage() {
       ),
     []
   );
-  const { openJoin } = useJoinModal();
 
   const abortRef = useRef<AbortController | null>(null);
   const actionsRef = useRef<HTMLDivElement | null>(null);
 
-  const [me, setMe] = useState<Me | null>(null);
+  const [view, setView] = useState<MeView | null>(null);
   const [rewards, setRewards] = useState<RewardsSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [pulseActions, setPulseActions] = useState(false);
 
-  const mapToMe = (a: ApiAccount, joined_at?: string | null): Me => ({
+  const mapToView = (a: ApiAccount, joined_at?: string | null): MeView => ({
     user_id: a.user_id,
     email: a.email,
     name: a.full_name ?? null,
@@ -97,35 +99,31 @@ export default function AccountPage() {
     joined_at: joined_at ?? null,
   });
 
-  async function currentUser() {
-    const { data } = await supabase.auth.getSession();
-    return data?.session?.user ?? null;
-  }
-
   async function fetchEverything() {
     setError("");
     abortRef.current?.abort();
     abortRef.current = new AbortController();
 
-    const user = await currentUser();
-    if (!user) {
-      setMe(null);
+    const uid = me?.user?.id;
+    if (!uid) {
+      setView(null);
       setRewards(null);
       return;
     }
 
     // Account
     const accRes = await fetch(
-      `${API_BASE}/api/account?user_id=${encodeURIComponent(user.id)}`,
+      `${API_BASE}/api/account?user_id=${encodeURIComponent(uid)}`,
       { cache: "no-store", signal: abortRef.current.signal }
     );
     if (!accRes.ok) throw new Error(`/api/account failed: ${accRes.status}`);
     const acc: ApiAccount = await accRes.json();
-    setMe(mapToMe(acc, (user as { created_at?: string }).created_at ?? null));
+    // joined_at comes from auth; fall back to undefined
+    setView(mapToView(acc, (me?.user as { created_at?: string })?.created_at ?? null));
 
-    // Rewards summary
+    // Rewards summary (optional)
     const rw = await fetch(
-      `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(user.id)}`,
+      `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(uid)}`,
       { cache: "no-store", signal: abortRef.current.signal }
     );
     if (rw.ok) {
@@ -146,9 +144,11 @@ export default function AccountPage() {
         // Clean noisy params (Stripe/auth)
         try {
           const url = new URL(window.location.href);
-          if (["status", "success", "canceled", "auth_error"].some((k) =>
-            url.searchParams.has(k)
-          )) {
+          if (
+            ["status", "success", "canceled", "auth_error"].some((k) =>
+              url.searchParams.has(k)
+            )
+          ) {
             window.history.replaceState({}, "", url.pathname + url.hash);
           }
         } catch {
@@ -164,7 +164,7 @@ export default function AccountPage() {
 
     return () => abortRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [me?.user?.id]);
 
   // Spotlight actions if arriving from an upgrade path
   useEffect(() => {
@@ -181,21 +181,20 @@ export default function AccountPage() {
     try {
       setBusy(true);
       setError("");
-      const user = await currentUser();
-      if (!user) {
-        // Not signed in: open the Join modal with intent
-        openJoin(plan);
+      if (!me?.user) {
+        // Not signed in: route to /join with intent
+        routeToJoin(plan);
         return;
       }
       const res = await fetch(`${API_BASE}/api/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // Pass intro-offer hint so the API can select the correct Stripe price
         body: JSON.stringify({
-          user_id: user.id,
-          email: user.email,
+          user_id: me.user.id,
+          email: me.email,
           plan,
-          trial: TRIAL,
+          // hint: API can choose intro price if configured
+          trial: showTrial,
           next: "/welcome",
         }),
         keepalive: true,
@@ -214,15 +213,14 @@ export default function AccountPage() {
     try {
       setBusy(true);
       setError("");
-      const user = await currentUser();
-      if (!user) {
-        openJoin("access");
+      if (!me?.user) {
+        routeToJoin(); // ask user to sign in
         return;
       }
       const res = await fetch(`${API_BASE}/api/stripe/portal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: user.id }),
+        body: JSON.stringify({ user_id: me.user.id }),
       });
       const json = await res.json().catch(() => ({} as { url?: string; error?: string }));
       if (!res.ok || !json?.url) throw new Error(json?.error || `Portal failed (${res.status})`);
@@ -235,8 +233,11 @@ export default function AccountPage() {
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
-    window.location.href = "/";
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      window.location.href = "/";
+    }
   };
 
   const refresh = async () => {
@@ -262,13 +263,14 @@ export default function AccountPage() {
   const prettyDate = (iso?: string | null) =>
     iso ? new Date(iso).toLocaleDateString() : "—";
 
-  const canJoin = !me || me.tier === "access" || me.status === "canceled" || me.status === "free";
-  const canUpgrade = me?.status !== "canceled" && me?.tier === "member";
-  const canDowngrade = me?.status !== "canceled" && me?.tier === "pro";
-  const isActive = me?.status === "active" || me?.status === "trialing";
+  const canJoin =
+    !view || view.tier === "access" || view.status === "canceled" || view.status === "free";
+  const canUpgrade = view?.status !== "canceled" && view?.tier === "member";
+  const canDowngrade = view?.status !== "canceled" && view?.tier === "pro";
+  const isActive = view?.status === "active" || view?.status === "trialing";
 
   // Trial-aware labels
-  const memberCta = TRIAL ? `Join as Member — ${TRIAL_COPY}` : "Join as Member (£2.99/mo)";
+  const memberCta = showTrial ? TRIAL_COPY : "Join as Member (£2.99/mo)";
   const proCta = "Go Pro (£7.99/mo)";
   const upgradeToProCta = "Upgrade to Pro";
 
@@ -280,7 +282,7 @@ export default function AccountPage() {
         aside={
           <button
             onClick={refresh}
-            className="rounded bg-neutral-800 hover:bg-neutral-700 px-3 py-2 disabled:opacity-60"
+            className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800 disabled:opacity-60"
             disabled={loading}
           >
             {loading ? "Refreshing…" : "Refresh"}
@@ -295,26 +297,23 @@ export default function AccountPage() {
       )}
 
       {/* Logged out */}
-      {!loading && !me && (
+      {!loading && !view && (
         <div className="rounded-xl border border-neutral-800 p-5 bg-neutral-900/60">
           <p className="font-medium mb-2">You’re not signed in.</p>
           <p className="text-neutral-400 mb-3">
             Use your email to get a magic sign-in link. No password needed.
           </p>
-          <button
-            onClick={() => openJoin("access")}
-            className="rounded-lg bg-amber-400 text-black px-4 py-2 font-medium hover:opacity-90"
-          >
+          <PrimaryButton onClick={() => routeToJoin()}>
             Sign in / Join
-          </button>
+          </PrimaryButton>
         </div>
       )}
 
       {/* Logged in */}
-      {!loading && me && (
+      {!loading && view && (
         <div className="space-y-6">
           {/* Status cues */}
-          {me.status === "past_due" && (
+          {view.status === "past_due" && (
             <div className="rounded-lg border border-red-700/40 bg-red-900/10 p-3 text-sm text-red-300">
               Payment issue detected. Update your billing details to keep benefits active.
               <button onClick={openBillingPortal} className="ml-3 underline underline-offset-4">
@@ -322,7 +321,7 @@ export default function AccountPage() {
               </button>
             </div>
           )}
-          {me.status === "trialing" && (
+          {view.status === "trialing" && (
             <div className="rounded-lg border border-amber-600/40 bg-amber-500/10 p-3 text-sm text-amber-200">
               You’re on a trial. Upgrade, switch, or cancel any time from billing.
               <button onClick={openBillingPortal} className="ml-3 underline underline-offset-4">
@@ -338,8 +337,8 @@ export default function AccountPage() {
                 <div className="text-sm text-neutral-400">My TradesCard</div>
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   <div className="text-2xl font-semibold">TradesCard</div>
-                  <Badge tone="muted">{TIER_COPY[me.tier].label}</Badge>
-                  {statusBadge(me.status)}
+                  <Badge tone="muted">{TIER_COPY[view.tier].label}</Badge>
+                  {statusBadge(view.status)}
                 </div>
               </div>
               <div className="rounded-lg border border-dashed border-neutral-700 px-3 py-2 text-xs text-neutral-400">
@@ -349,36 +348,36 @@ export default function AccountPage() {
 
             <div className="mt-4 grid gap-2 sm:grid-cols-2">
               <div className="truncate">
-                <span className="opacity-60">Name:</span> {me.name || "—"}
+                <span className="opacity-60">Name:</span> {view.name || "—"}
               </div>
               <div className="truncate">
-                <span className="opacity-60">Email:</span> {me.email}
+                <span className="opacity-60">Email:</span> {view.email}
               </div>
               <div className="truncate">
-                <span className="opacity-60">Member ID:</span> {me.user_id}
+                <span className="opacity-60">Member ID:</span> {view.user_id}
                 <button
                   className="ml-2 rounded bg-neutral-800 px-2 py-0.5 text-xs hover:bg-neutral-700"
-                  onClick={() => navigator.clipboard.writeText(me.user_id)}
+                  onClick={() => navigator.clipboard.writeText(view.user_id)}
                 >
                   Copy ID
                 </button>
               </div>
               <div className="truncate">
-                <span className="opacity-60">Joined:</span> {prettyDate(me.joined_at)}
+                <span className="opacity-60">Joined:</span> {prettyDate(view.joined_at)}
               </div>
             </div>
 
             <div className="mt-4 grid grid-cols-3 gap-2 text-center">
               <div className="rounded-lg border border-neutral-800 p-3">
-                <div className="text-2xl font-semibold">{TIER_COPY[me.tier].boost}</div>
+                <div className="text-2xl font-semibold">{TIER_COPY[view.tier].boost}</div>
                 <div className="text-xs text-neutral-400 mt-1">Tier boost</div>
               </div>
               <div className="rounded-lg border border-neutral-800 p-3">
-                <div className="text-2xl font-semibold">{TIER_COPY[me.tier].priceShort}</div>
+                <div className="text-2xl font-semibold">{TIER_COPY[view.tier].priceShort}</div>
                 <div className="text-xs text-neutral-400 mt-1">per month</div>
               </div>
               <div className="rounded-lg border border-neutral-800 p-3">
-                <div className="text-2xl font-semibold">{prettyDate(me.renewal_date)}</div>
+                <div className="text-2xl font-semibold">{prettyDate(view.renewal_date)}</div>
                 <div className="text-xs text-neutral-400 mt-1">Renews</div>
               </div>
             </div>
@@ -407,12 +406,12 @@ export default function AccountPage() {
               </div>
               <div className="rounded-lg border border-neutral-800 p-3">
                 <div className="text-sm text-neutral-400">Status</div>
-                <div className="mt-1">{statusBadge(me.status)}</div>
+                <div className="mt-1">{statusBadge(view.status)}</div>
               </div>
             </div>
             <p className="mt-3 text-sm text-neutral-400">
-              Cancelling or downgrading stops new entries immediately. Lifetime points remain on
-              your profile but do not qualify you for draws while inactive.
+              Cancelling or downgrading stops new entries immediately. Lifetime points remain
+              on your profile but do not qualify you for draws while inactive.
             </p>
           </section>
 
@@ -425,36 +424,28 @@ export default function AccountPage() {
 
             {canJoin && (
               <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={() => startMembership("member")}
-                  disabled={busy}
-                  className="px-4 py-2 rounded-lg bg-amber-400 text-black font-medium disabled:opacity-60"
-                >
+                <PrimaryButton onClick={() => startMembership("member")} disabled={busy}>
                   {busy ? "Opening…" : memberCta}
-                </button>
+                </PrimaryButton>
                 <button
                   onClick={() => startMembership("pro")}
                   disabled={busy}
-                  className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-60"
+                  className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
                 >
-                  {busy ? "Opening…" : proCta}
+                  {busy ? "Opening…" : "Go Pro (£7.99/mo)"}
                 </button>
               </div>
             )}
 
             {canUpgrade && (
               <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={() => startMembership("pro")}
-                  disabled={busy}
-                  className="px-4 py-2 rounded-lg bg-amber-400/90 text-black hover:bg-amber-400 disabled:opacity-60"
-                >
+                <PrimaryButton onClick={() => startMembership("pro")} disabled={busy}>
                   {busy ? "Opening…" : upgradeToProCta}
-                </button>
+                </PrimaryButton>
                 <button
                   onClick={openBillingPortal}
                   disabled={busy}
-                  className="px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
+                  className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
                 >
                   {busy ? "Opening…" : "Manage billing / Cancel"}
                 </button>
@@ -466,14 +457,14 @@ export default function AccountPage() {
                 <button
                   onClick={() => startMembership("member")}
                   disabled={busy}
-                  className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-60"
+                  className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
                 >
                   {busy ? "Opening…" : "Switch to Member"}
                 </button>
                 <button
                   onClick={openBillingPortal}
                   disabled={busy}
-                  className="px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
+                  className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
                 >
                   {busy ? "Opening…" : "Manage billing / Cancel"}
                 </button>
@@ -486,7 +477,7 @@ export default function AccountPage() {
                 <button
                   onClick={openBillingPortal}
                   disabled={busy}
-                  className="px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
+                  className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
                 >
                   {busy ? "Opening…" : "Manage billing / Cancel"}
                 </button>
@@ -502,7 +493,7 @@ export default function AccountPage() {
           <div className="flex justify-end">
             <button
               onClick={signOut}
-              className="px-4 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800"
+              className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
             >
               Sign out
             </button>
