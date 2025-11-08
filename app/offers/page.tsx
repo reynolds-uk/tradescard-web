@@ -19,6 +19,7 @@ const API_BASE =
   "https://tradescard-api.vercel.app";
 
 type Tier = "access" | "member" | "pro";
+type NudgeSource = "banner" | "sticky" | "card";
 
 export default function OffersPage() {
   // Auth/membership
@@ -27,7 +28,8 @@ export default function OffersPage() {
   const tier: Tier = (me?.tier as Tier) ?? "access";
   const isLoggedIn = !!me?.user;
   const isPaidTier = tier === "member" || tier === "pro";
-  const isActivePaid = isPaidTier && (me?.status === "active" || me?.status === "trialing");
+  const isActivePaid =
+    isPaidTier && (me?.status === "active" || me?.status === "trialing");
   const showTrial = shouldShowTrial(me);
 
   // Where to bounce back after checkout/auth
@@ -61,7 +63,9 @@ export default function OffersPage() {
       } catch (e) {
         if (!aborted) {
           setFetchErr(
-            e instanceof Error ? e.message : "Failed to load offers. Please try again."
+            e instanceof Error
+              ? e.message
+              : "Failed to load offers. Please try again."
           );
           setItems([]);
         }
@@ -79,21 +83,22 @@ export default function OffersPage() {
   // - Visitor (not logged in): prompt to Join Free (create Access account)
   // - Access (logged in): CAN redeem displayed offers; sees upgrade nudges to get more offers
   // - Paid: CAN redeem all displayed offers
-  const canRedeem = isLoggedIn; // key change: Access users can redeem
+  const canRedeem = isLoggedIn;
 
-  const handleUnlockPaid = (source: "banner" | "card" | "sticky") => {
+  const handleUnlockPaid = (source: NudgeSource) => {
     track("offers_nudge_upgrade_click", { trial: showTrial, source });
     routeToJoin("member");
   };
 
-  const handleJoinFree = (source: "banner" | "sticky") => {
+  const handleJoinFree = (source: NudgeSource) => {
     track("offers_nudge_join_free_click", { source });
     routeToJoin(); // Access flow
   };
 
   const redeem = (o: Offer) => {
     if (!canRedeem) {
-      unlockClick("card");
+      // Visitor → prompt to create a free Access account
+      handleJoinFree("card");
       return;
     }
     // Track then open
@@ -111,7 +116,8 @@ export default function OffersPage() {
   const subtitle = useMemo(() => {
     if (!ready) return "Loading your offers…";
     if (isActivePaid) return "All your member deals in one place.";
-    if (isLoggedIn) return "You can redeem these now. Upgrade to unlock the full catalogue.";
+    if (isLoggedIn)
+      return "You can redeem these now. Upgrade to unlock the full catalogue.";
     return "See what’s on. Join free to redeem, upgrade to unlock more.";
   }, [ready, isActivePaid, isLoggedIn]);
 
@@ -229,8 +235,7 @@ export default function OffersPage() {
                   onRedeem={() => redeem(o)}
                   userTier={tier}                 // paid users won't see "PUBLIC" badge
                   activePaid={isActivePaid}       // card can hide lock/teaser for paid
-                  // CTA text per state for *non-paid visitors only*.
-                  // Access users can redeem, so let the card show "Redeem" naturally.
+                  // CTA for *visitors only*. Access users can redeem directly.
                   ctaLabel={
                     !isLoggedIn
                       ? showTrial
