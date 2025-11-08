@@ -23,7 +23,7 @@ type Tier = "access" | "member" | "pro";
 export default function OffersPage() {
   // Auth/membership
   const me = useMe();                // { user, tier, status, ready? }
-  const ready = useMeReady(me);      // prevents UI flash until we know auth
+  const ready = useMeReady();      // prevents UI flash until we know auth
   const tier: Tier = (me?.tier as Tier) ?? "access";
   const isPaidTier = tier === "member" || tier === "pro";
   const isActivePaid = isPaidTier && (me?.status === "active" || me?.status === "trialing");

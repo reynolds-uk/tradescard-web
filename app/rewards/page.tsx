@@ -53,7 +53,7 @@ function StatCard({
 
 export default function RewardsPage() {
   const me = useMe();                   // { user?, email?, tier, status, ready? }
-  const ready = useMeReady(me);         // prevents flicker before auth state resolves
+  const ready = useMeReady();         // prevents flicker before auth state resolves
   const tier: Tier = (me?.tier as Tier) ?? "access";
   const status = me?.status ?? "free";
   const isSignedIn = !!me?.user;

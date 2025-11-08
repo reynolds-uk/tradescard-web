@@ -83,7 +83,7 @@ function SkeletonCard() {
 --------------------------*/
 export default function BenefitsPage() {
   const me = useMe();                          // { user?, email?, tier, status, ready? }
-  const ready = useMeReady(me);                // avoid logged-out → in flash
+  const ready = useMeReady();                // avoid logged-out → in flash
   const showTrial = shouldShowTrial(me);
 
   const tier: Tier = (me?.tier as Tier) ?? "access";
