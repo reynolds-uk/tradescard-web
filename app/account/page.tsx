@@ -68,7 +68,7 @@ function Badge({
 
 export default function AccountPage() {
   const me = useMe();                 // { user?, email?, tier, status, ready? }
-  const ready = useMeReady(me);       // guard to stop logged-out ➜ in flicker
+  const ready = useMeReady();       // guard to stop logged-out ➜ in flicker
   const showTrial = shouldShowTrial(me);
 
   // Supabase only for signOut()
