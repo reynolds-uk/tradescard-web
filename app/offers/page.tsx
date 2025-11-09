@@ -21,10 +21,16 @@ const API_BASE =
 type Tier = "access" | "member" | "pro";
 type NudgeSource = "banner" | "sticky" | "card" | "empty";
 
+// Local extension so we can safely reference optional branding fields if present
+type OfferWithExtras = Offer & {
+  merchant?: string | null;
+  brand?: string | null;
+};
+
 export default function OffersPage() {
   // Auth / membership
-  const me = useMe();                 // { user, tier, status }
-  const ready = useMeReady();         // avoid auth flash
+  const me = useMe();
+  const ready = useMeReady();
   const tier: Tier = (me?.tier as Tier) ?? "access";
   const isLoggedIn = !!me?.user;
   const isPaidTier = tier === "member" || tier === "pro";
@@ -81,10 +87,7 @@ export default function OffersPage() {
     return () => ctrl.abort();
   }, [ready, isActivePaid]);
 
-  // Redemption rules:
-  // - Visitor: prompt to Join Free
-  // - Access (logged in): CAN redeem
-  // - Paid: CAN redeem
+  // Redemption rules
   const canRedeem = isLoggedIn;
 
   const handleUnlockPaid = (source: NudgeSource) => {
@@ -94,7 +97,7 @@ export default function OffersPage() {
 
   const handleJoinFree = (source: NudgeSource) => {
     track("offers_nudge_join_free_click", { source });
-    routeToJoin(); // Access flow
+    routeToJoin();
   };
 
   const redeem = (o: Offer) => {
@@ -102,7 +105,6 @@ export default function OffersPage() {
       handleJoinFree("card");
       return;
     }
-    // Track then open
     fetch(`${API_BASE}/api/redemptions/click`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -129,14 +131,14 @@ export default function OffersPage() {
     return ["All", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
   }, [items]);
 
-  // Apply filters
+  // Apply filters (search title + optional brand/merchant + category)
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return items.filter((o) => {
+      const ox = o as OfferWithExtras;
       const catOk = cat === "All" || (o.category || "") === cat;
       if (!q) return catOk;
-      const hay =
-        `${o.title ?? ""} ${o.merchant ?? ""} ${o.category ?? ""}`.toLowerCase();
+      const hay = `${o.title ?? ""} ${ox.merchant ?? ox.brand ?? ""} ${o.category ?? ""}`.toLowerCase();
       return catOk && hay.includes(q);
     });
   }, [items, cat, query]);
@@ -144,10 +146,7 @@ export default function OffersPage() {
   // Skeleton?
   const showSkeleton = !ready || loading;
 
-  // Sticky mobile CTA:
-  // - Visitor: Join free + Try Member
-  // - Access: Upgrade to unlock more (no Join free)
-  // - Paid: none
+  // Sticky mobile CTA
   const showSticky = ready && !isActivePaid;
   const stickyIsVisitor = showSticky && !isLoggedIn;
 
@@ -224,7 +223,7 @@ export default function OffersPage() {
           </div>
         </div>
 
-        {/* Upgrade/Join nudge (desktop only to avoid duplication with sticky) */}
+        {/* Upgrade/Join nudge (desktop) */}
         {!isActivePaid && ready && (
           <div className="mb-4 hidden md:flex items-center justify-between rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
             <div className="text-sm text-neutral-300">
@@ -265,7 +264,7 @@ export default function OffersPage() {
         )}
 
         {/* Catalogue */}
-        {showSkeleton ? (
+        {!ready || loading ? (
           <div className="grid gap-3 md:grid-cols-3">
             {Array.from({ length: 9 }).map((_, i) => (
               <div
@@ -306,7 +305,6 @@ export default function OffersPage() {
                 onRedeem={() => redeem(o)}
                 userTier={tier}
                 activePaid={isActivePaid}
-                // CTA for visitors only (Access can redeem)
                 ctaLabel={
                   !isLoggedIn ? (showTrial ? TRIAL_COPY : "Join free to redeem") : undefined
                 }
