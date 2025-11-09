@@ -52,7 +52,7 @@ export default function JoinPage() {
   // Free block open/closed
   const [freeOpen, setFreeOpen] = useState(false);
 
-  // Email states (kept separate so inputs don’t fight)
+  // Email states (separate so inputs don’t “fight”)
   const [emailPaid, setEmailPaid] = useState("");
   const [emailFree, setEmailFree] = useState("");
 
@@ -241,7 +241,7 @@ export default function JoinPage() {
       await sendMagicLink(emailPaid, "/join"); // return here so we can resume checkout
       setSent(true);
       setInfo(`Link sent. After you sign in, we’ll continue to ${openInline} (${cycle}).`);
-      track("join_free_click"); // reuse event for ‘send link’
+      track("join_free_click"); // simple reuse for “send link”
     } catch (e) {
       setSent(false);
       setInfo(
@@ -345,11 +345,16 @@ export default function JoinPage() {
           </PrimaryButton>
         ) : (
           <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]">
+            <label htmlFor={`email-${plan}`} className="sr-only">
+              Email address
+            </label>
             <input
+              id={`email-${plan}`}
               ref={paidInputRef}
               type="email"
               inputMode="email"
               placeholder="you@example.com"
+              autoComplete="email"
               value={emailPaid}
               onChange={(e) => setEmailPaid(e.target.value)}
               onKeyDown={onEnter(handlePaidLink)}
@@ -387,22 +392,24 @@ export default function JoinPage() {
       />
 
       {/* Top tabs */}
-      <div className="mb-3 inline-flex rounded-xl border border-neutral-800 p-1">
+      <div role="tablist" aria-label="Join or sign in" className="mb-3 inline-flex rounded-xl border border-neutral-800 p-1">
         <button
+          role="tab"
+          aria-selected={tab === "join"}
           onClick={() => setTab("join")}
           className={`px-3 py-1.5 text-sm rounded-lg ${
             tab === "join" ? "bg-neutral-800" : "hover:bg-neutral-900"
           }`}
-          aria-pressed={tab === "join"}
         >
           Join
         </button>
         <button
+          role="tab"
+          aria-selected={tab === "signin"}
           onClick={() => setTab("signin")}
           className={`px-3 py-1.5 text-sm rounded-lg ${
             tab === "signin" ? "bg-neutral-800" : "hover:bg-neutral-900"
           }`}
-          aria-pressed={tab === "signin"}
         >
           Sign in
         </button>
@@ -476,11 +483,16 @@ export default function JoinPage() {
                 </PrimaryButton>
               ) : (
                 <div className="flex w-full flex-col items-stretch gap-2 md:w-auto md:flex-row">
+                  <label htmlFor="email-access" className="sr-only">
+                    Email address
+                  </label>
                   <input
+                    id="email-access"
                     ref={freeInputRef}
                     type="email"
                     inputMode="email"
                     placeholder="you@example.com"
+                    autoComplete="email"
                     value={emailFree}
                     onChange={(e) => setEmailFree(e.target.value)}
                     onKeyDown={onEnter(handleFreeJoin)}
@@ -509,11 +521,16 @@ export default function JoinPage() {
             Enter your email and we’ll email you a secure sign-in link.
           </div>
           <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+            <label htmlFor="email-signin" className="sr-only">
+              Email address
+            </label>
             <input
+              id="email-signin"
               ref={freeInputRef}
               type="email"
               inputMode="email"
               placeholder="you@example.com"
+              autoComplete="email"
               value={emailFree}
               onChange={(e) => setEmailFree(e.target.value)}
               onKeyDown={onEnter(handleFreeJoin)}
