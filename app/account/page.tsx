@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
@@ -67,8 +68,10 @@ function Badge({
 }
 
 export default function AccountPage() {
-  const me = useMe();                 // { user?, email?, tier, status? }
+  const me = useMe(); // { user?, email?, tier, status? }
   const ready = useMeReady();
+  const params = useSearchParams();
+
   const showTrial = shouldShowTrial(me);
   const isSignedIn = !!me?.user;
 
@@ -90,6 +93,11 @@ export default function AccountPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  // NEW: pending activation (after Stripe, before sign-in)
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+  const [resendInfo, setResendInfo] = useState<string>("");
+
   const [pulseActions, setPulseActions] = useState(false);
 
   const mapToView = (a: ApiAccount, joined_at?: string | null): MeView => ({
@@ -137,21 +145,54 @@ export default function AccountPage() {
     }
   }
 
+  // Clean noisy params + detect pending activation
   useEffect(() => {
     if (!ready) return;
 
     (async () => {
       try {
         setLoading(true);
-        // Clean noisy params (Stripe / auth redirects)
-        try {
-          const url = new URL(window.location.href);
-          ["status", "success", "canceled", "auth_error", "error", "error_code"].forEach((k) =>
-            url.searchParams.delete(k)
-          );
-          window.history.replaceState({}, "", url.pathname + url.hash);
-        } catch {}
-        await fetchEverything();
+
+        // Look for pending signals:
+        // - session_id from Stripe (preferred, we can resolve to email)
+        // - pending_email from earlier flows as a fallback
+        const sessionId = params.get("session_id");
+        const fallbackEmail = params.get("pending_email");
+
+        if (!isSignedIn && (sessionId || fallbackEmail)) {
+          try {
+            let email: string | null = null;
+            if (sessionId) {
+              const r = await fetch(
+                `${API_BASE}/api/checkout/session?session_id=${encodeURIComponent(sessionId)}`
+              );
+              if (r.ok) {
+                const j = await r.json().catch(() => ({} as any));
+                email = (j?.email as string) || null;
+              }
+            }
+            if (!email && fallbackEmail) email = fallbackEmail;
+
+            if (email) {
+              setPendingEmail(email);
+              // Strip noise from the URL
+              try {
+                const url = new URL(window.location.href);
+                ["session_id", "pending_email", "status", "success", "canceled", "auth_error", "error", "error_code"].forEach(
+                  (k) => url.searchParams.delete(k)
+                );
+                window.history.replaceState({}, "", url.pathname + url.hash);
+              } catch {}
+            }
+          } catch {
+            /* non-fatal */
+          }
+        }
+
+        // If signed in, load the usual account view
+        if (isSignedIn) {
+          await fetchEverything();
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Something went wrong");
       } finally {
@@ -161,7 +202,7 @@ export default function AccountPage() {
 
     return () => abortRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, me?.user?.id]);
+  }, [ready, isSignedIn, me?.user?.id]);
 
   // Spotlight actions if arriving from an upgrade path
   useEffect(() => {
@@ -246,6 +287,29 @@ export default function AccountPage() {
     }
   };
 
+  // Resend magic link (pending activation state)
+  const resendMagicLink = async () => {
+    if (!pendingEmail) return;
+    try {
+      setBusy(true);
+      setResendInfo("");
+      const res = await fetch(`${API_BASE}/api/auth/magic-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: pendingEmail,
+          redirect_to: "/welcome", // when they click the link
+        }),
+      });
+      if (!res.ok) throw new Error(`Resend failed (${res.status})`);
+      setResendInfo("Link sent. Please check your inbox.");
+    } catch (e) {
+      setResendInfo(e instanceof Error ? e.message : "Could not resend link");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // UI helpers
   const statusBadge = (status: string) => {
     if (status === "active") return <Badge tone="ok">active</Badge>;
@@ -282,6 +346,15 @@ export default function AccountPage() {
   };
 
   const showSticky = ready && !loading && view && (canJoin || canUpgrade || canDowngrade);
+
+  // Mask email helper
+  const maskEmail = (e?: string | null) => {
+    if (!e) return "—";
+    const [u, d] = e.split("@");
+    if (!d) return e;
+    const maskedUser = u.length <= 2 ? u[0] + "…" : u.slice(0, 2) + "…" + u.slice(-1);
+    return `${maskedUser}@${d}`;
+  };
 
   return (
     <>
@@ -334,8 +407,34 @@ export default function AccountPage() {
           </div>
         )}
 
-        {/* Logged out */}
-        {ready && !loading && !isSignedIn && (
+        {/* NEW: Logged out + pending activation cue */}
+        {ready && !loading && !isSignedIn && pendingEmail && (
+          <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-5">
+            <p className="font-medium">Please activate your account</p>
+            <p className="text-sm text-amber-200 mt-1">
+              We’ve sent a secure link to <span className="font-medium">{maskEmail(pendingEmail)}</span>.
+              Click it to finish setting up your membership.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <PrimaryButton onClick={resendMagicLink} disabled={busy}>
+                {busy ? "Sending…" : "Resend link"}
+              </PrimaryButton>
+              <button
+                onClick={() => routeToJoin()}
+                className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800"
+              >
+                Use a different email
+              </button>
+              {resendInfo && <span className="text-xs text-amber-200">{resendInfo}</span>}
+            </div>
+            <p className="mt-2 text-xs text-amber-200/80">
+              Tip: check Promotions/Spam if it hasn’t arrived within a minute.
+            </p>
+          </div>
+        )}
+
+        {/* Logged out (no pending state) */}
+        {ready && !loading && !isSignedIn && !pendingEmail && (
           <div className="rounded-xl border border-neutral-800 p-5 bg-neutral-900/60">
             <p className="font-medium mb-2">You’re not signed in.</p>
             <p className="text-neutral-400 mb-3">
@@ -356,7 +455,7 @@ export default function AccountPage() {
         )}
 
         {/* Logged in */}
-        {ready && !loading && view && (
+        {ready && !loading && isSignedIn && view && (
           <div className="space-y-6">
             {/* Status cues */}
             {view.status === "past_due" && (
