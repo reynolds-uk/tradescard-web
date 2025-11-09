@@ -19,7 +19,7 @@ type Cycle = "month" | "year";
 const APP_URL =
   process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
 
-// Display-only prices (do not hard-wire Stripe IDs here)
+// display prices (purely visual here)
 const PRICE = {
   member: { month: "£2.99/mo", year: "£29.00/yr" },
   pro: { month: "£7.99/mo", year: "£79.00/yr" },
@@ -39,34 +39,35 @@ export default function JoinPage() {
   const me = useMe();
   const showTrial = shouldShowTrial(me);
 
-  // Checkout helper
+  // paid checkout helper
   const { busy, error: checkoutError, startMembership } = useJoinActions("/join");
 
-  // UI state
+  // UI tabs + billing cycle
   const [tab, setTab] = useState<"join" | "signin">("join");
   const [cycle, setCycle] = useState<Cycle>("month");
 
-  // Which paid card shows inline email (only one at a time)
-  const [activeInline, setActiveInline] = useState<null | "member" | "pro">(null);
+  // which paid card is “open” for inline email
+  const [openInline, setOpenInline] = useState<null | "member" | "pro">(null);
 
-  // Email states (separate so they don’t fight each other)
-  const [emailPaid, setEmailPaid] = useState("");
+  // separate, stable email state per input
+  const [emailMember, setEmailMember] = useState("");
+  const [emailPro, setEmailPro] = useState("");
   const [emailFree, setEmailFree] = useState("");
 
-  // Free path collapsed until clicked
+  // free block collapsed by default
   const [freeOpen, setFreeOpen] = useState(false);
 
-  // Feedback
+  // messaging
   const [info, setInfo] = useState("");
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
 
-  // Refs + “only run once” guard for initial focus
-  const paidInputRef = useRef<HTMLInputElement>(null);
-  const freeInputRef = useRef<HTMLInputElement>(null);
-  const initialised = useRef(false);
+  // refs (focus when opening, not on each render)
+  const memberRef = useRef<HTMLInputElement>(null);
+  const proRef = useRef<HTMLInputElement>(null);
+  const freeRef = useRef<HTMLInputElement>(null);
 
-  // Supabase client
+  // supabase client
   const supabase = useMemo(
     () =>
       createClient(
@@ -76,25 +77,20 @@ export default function JoinPage() {
     []
   );
 
-  // One-time init from URL
+  // initial URL-driven setup (run once)
   useEffect(() => {
-    if (initialised.current) return;
-    initialised.current = true;
-
     const mode = (params.get("mode") || "").toLowerCase();
     const qPlan = (params.get("plan") || "").toLowerCase() as "" | "member" | "pro";
     const qCycle = (params.get("cycle") || "").toLowerCase() as "" | Cycle;
-
     if (mode === "signin") setTab("signin");
     if (qCycle === "year") setCycle("year");
-
-    // If they arrive with a paid intent (logged out), open that inline once
     if (!me.user && (qPlan === "member" || qPlan === "pro")) {
-      setActiveInline(qPlan);
-      queueMicrotask(() => paidInputRef.current?.focus());
+      setOpenInline(qPlan);
+      queueMicrotask(() =>
+        (qPlan === "member" ? memberRef : proRef).current?.focus()
+      );
     }
 
-    // Auth errors in callback URL (e.g. used link twice)
     const err = params.get("error") || params.get("error_code");
     if (err) {
       const key = err.toLowerCase();
@@ -111,20 +107,21 @@ export default function JoinPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // If already signed in, either continue a pending checkout or go to /offers
+  // if already signed in, continue checkout (if applicable) or go to /offers
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getSession();
-      if (data?.session?.user) {
-        if (activeInline) {
-          await startMembership(activeInline, cycle); // <-- FIXED: pass only the interval
-          return;
-        }
-        router.replace("/offers");
+      if (!data?.session?.user) return;
+      if (openInline) {
+        await startMembership(openInline, { cycle, trial: showTrial });
+        return;
       }
+      router.replace("/offers");
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeInline]);
+  }, [openInline]);
+
+  /* helpers */
 
   const isValidEmail = (v: string) => /^\S+@\S+\.\S+$/.test(v.trim());
 
@@ -138,7 +135,6 @@ export default function JoinPage() {
     if (error) throw error;
   }
 
-  // Free (Access)
   async function handleFreeJoin() {
     setInfo("");
     try {
@@ -154,34 +150,38 @@ export default function JoinPage() {
           ? "Enter a valid email to get your sign-in link."
           : "We couldn’t send the link just now. Please try again."
       );
-      freeInputRef.current?.focus();
+      freeRef.current?.focus();
     } finally {
       setSending(false);
     }
   }
 
-  // Choose a paid plan
   async function choose(plan: Exclude<Plan, "access">) {
     setInfo("");
     if (!me.user) {
-      setActiveInline(plan);
-      queueMicrotask(() => paidInputRef.current?.focus());
+      setOpenInline(plan);
+      queueMicrotask(() =>
+        (plan === "member" ? memberRef : proRef).current?.focus()
+      );
       return;
     }
-    track(plan === "member" ? "join_member_click" : "join_pro_click", { cycle, trial: showTrial });
-    await startMembership(plan, cycle); // <-- FIXED
+    track(plan === "member" ? "join_member_click" : "join_pro_click", {
+      trial: showTrial,
+      cycle,
+    });
+    await startMembership(plan, { cycle, trial: showTrial });
   }
 
-  // Send link for paid inline, then continue checkout post-sign-in
-  async function handlePaidLink() {
-    if (!activeInline) return;
+  async function sendPaidLink(plan: "member" | "pro") {
+    const value = plan === "member" ? emailMember : emailPro;
     setInfo("");
     try {
       setSending(true);
-      await sendMagicLink(emailPaid, "/join");
+      // return to /join so we can resume checkout
+      await sendMagicLink(value, "/join");
       setSent(true);
-      setInfo(`Link sent. After you sign in, we’ll continue to ${activeInline} (${cycle}).`);
-      track("join_free_click");
+      setInfo(`Link sent. After you sign in, we’ll continue to ${plan} (${cycle}).`);
+      track("join_free_click"); // reuse event for “send link”
     } catch (e) {
       setSent(false);
       setInfo(
@@ -189,7 +189,7 @@ export default function JoinPage() {
           ? "Enter a valid email to get your sign-in link."
           : "We couldn’t send the link just now. Please try again."
       );
-      paidInputRef.current?.focus();
+      (plan === "member" ? memberRef : proRef).current?.focus();
     } finally {
       setSending(false);
     }
@@ -222,19 +222,26 @@ export default function JoinPage() {
     );
   }
 
-  function PlanCard({
+  function PaidCard({
     plan,
     title,
     features,
+    email,
+    setEmail,
+    inputRef,
     accent,
   }: {
-    plan: Exclude<Plan, "access">;
+    plan: "member" | "pro";
     title: string;
     features: string[];
+    email: string;
+    setEmail: (v: string) => void;
+    inputRef: React.RefObject<HTMLInputElement>;
     accent?: "pro" | "member";
   }) {
-    const isInline = activeInline === plan;
     const price = PRICE[plan][cycle];
+    const isOpen = openInline === plan;
+
     const accentCls =
       accent === "pro"
         ? "border-amber-400/30 ring-1 ring-amber-400/20"
@@ -242,7 +249,7 @@ export default function JoinPage() {
 
     const ctaLabel =
       plan === "member" && cycle === "month" && showTrial
-        ? TRIAL_COPY // e.g. "Try Member for £1 for 90 days"
+        ? TRIAL_COPY
         : plan === "member"
         ? `Choose Member – ${price}`
         : `Choose Pro – ${price}`;
@@ -260,34 +267,39 @@ export default function JoinPage() {
           ))}
         </ul>
 
-        {!isInline ? (
-          <PrimaryButton
-            onClick={() => choose(plan)}
-            disabled={busy || sending}
-            className="mt-4 w-full"
-          >
-            {ctaLabel}
-          </PrimaryButton>
-        ) : (
-          <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]">
+        {/* Keep both the CTA and the input in the DOM.
+            We only toggle visibility so the input node never remounts (no blur). */}
+        <div className="mt-4">
+          <div className={isOpen ? "hidden" : "block"}>
+            <PrimaryButton
+              onClick={() => choose(plan)}
+              disabled={busy || sending}
+              className="w-full"
+            >
+              {ctaLabel}
+            </PrimaryButton>
+          </div>
+
+          <div className={!isOpen ? "hidden" : "grid gap-2 sm:grid-cols-[1fr_auto]"}>
             <input
-              ref={paidInputRef}
+              ref={inputRef}
               type="email"
               inputMode="email"
               placeholder="you@example.com"
-              value={emailPaid}
-              onChange={(e) => setEmailPaid(e.target.value)}
-              onKeyDown={onEnter(handlePaidLink)}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={onEnter(() => sendPaidLink(plan))}
               className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
+              autoComplete="email"
             />
-            <PrimaryButton onClick={handlePaidLink} disabled={busy || sending}>
+            <PrimaryButton onClick={() => sendPaidLink(plan)} disabled={busy || sending}>
               {sent ? "Link sent ✓" : sending ? "Sending…" : "Send sign-in link"}
             </PrimaryButton>
             <p className="col-span-full text-xs text-neutral-500">
               We’ll continue to <strong>{title}</strong> ({cycle}) after you sign in.
             </p>
           </div>
-        )}
+        </div>
       </div>
     );
   }
@@ -308,7 +320,7 @@ export default function JoinPage() {
         }
       />
 
-      {/* Tab switcher */}
+      {/* top tabs */}
       <div className="mb-3 inline-flex rounded-xl border border-neutral-800 p-1">
         <button
           onClick={() => setTab("join")}
@@ -332,7 +344,7 @@ export default function JoinPage() {
 
       {tab === "join" && <CycleTabs />}
 
-      {/* Alerts */}
+      {/* alerts */}
       {info && (
         <div className="mb-4 rounded border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-blue-200 text-sm">
           {info}
@@ -344,11 +356,11 @@ export default function JoinPage() {
         </div>
       )}
 
-      {/* Main content */}
+      {/* main content */}
       {tab === "join" ? (
         <>
           <div className="grid gap-4 md:grid-cols-2">
-            <PlanCard
+            <PaidCard
               plan="member"
               title="Member"
               features={[
@@ -357,9 +369,12 @@ export default function JoinPage() {
                 "Monthly prize entry",
                 "Digital card",
               ]}
+              email={emailMember}
+              setEmail={setEmailMember}
+              inputRef={memberRef}
               accent="member"
             />
-            <PlanCard
+            <PaidCard
               plan="pro"
               title="Pro"
               features={[
@@ -367,6 +382,9 @@ export default function JoinPage() {
                 "Early-access deals & Pro-only offers",
                 "Double prize entries",
               ]}
+              email={emailPro}
+              setEmail={setEmailPro}
+              inputRef={proRef}
               accent="pro"
             />
           </div>
@@ -375,15 +393,14 @@ export default function JoinPage() {
           <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="text-sm text-neutral-300">
-                Prefer to start free? Join with Access to browse and redeem offers. Upgrade any
-                time.
+                Prefer to start free? Join with Access to browse and redeem offers. Upgrade any time.
               </div>
 
               {!freeOpen ? (
                 <PrimaryButton
                   onClick={() => {
                     setFreeOpen(true);
-                    queueMicrotask(() => freeInputRef.current?.focus());
+                    queueMicrotask(() => freeRef.current?.focus());
                   }}
                   className="self-start md:self-auto"
                 >
@@ -392,7 +409,7 @@ export default function JoinPage() {
               ) : (
                 <div className="flex w-full flex-col items-stretch gap-2 md:w-auto md:flex-row">
                   <input
-                    ref={freeInputRef}
+                    ref={freeRef}
                     type="email"
                     inputMode="email"
                     placeholder="you@example.com"
@@ -400,6 +417,7 @@ export default function JoinPage() {
                     onChange={(e) => setEmailFree(e.target.value)}
                     onKeyDown={onEnter(handleFreeJoin)}
                     className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500 md:w-64"
+                    autoComplete="email"
                   />
                   <PrimaryButton onClick={handleFreeJoin} disabled={busy || sending} className="text-sm">
                     {sent ? "Link sent ✓" : sending ? "Sending…" : "Email me a link"}
@@ -409,23 +427,23 @@ export default function JoinPage() {
             </div>
             <div className="mt-2 text-xs text-neutral-500">
               No card details needed • You’ll return to /offers after sign-in
-              {activeInline && (
+              {openInline && (
                 <span className="ml-2 text-neutral-400">
-                  (We’ll continue to <strong>{activeInline}</strong> after you sign in)
+                  (We’ll continue to <strong>{openInline}</strong> after you sign in)
                 </span>
               )}
             </div>
           </div>
         </>
       ) : (
-        // Sign-in tab
+        // SIGN IN TAB
         <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
           <div className="text-sm text-neutral-300">
             Enter your email and we’ll send you a magic link.
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
             <input
-              ref={freeInputRef}
+              ref={freeRef}
               type="email"
               inputMode="email"
               placeholder="you@example.com"
@@ -433,14 +451,14 @@ export default function JoinPage() {
               onChange={(e) => setEmailFree(e.target.value)}
               onKeyDown={onEnter(handleFreeJoin)}
               className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
+              autoComplete="email"
             />
             <PrimaryButton onClick={handleFreeJoin} disabled={busy || sending}>
               {sent ? "Link sent ✓" : sending ? "Sending…" : "Email me a link"}
             </PrimaryButton>
           </div>
           <p className="mt-2 text-xs text-neutral-500">
-            You’ll return to /offers after sign-in. If your link has expired or was already used,
-            request a new one.
+            You’ll return to /offers after sign-in. If your link has expired or was already used, request a new one.
           </p>
         </div>
       )}
