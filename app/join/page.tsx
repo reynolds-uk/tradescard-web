@@ -71,7 +71,7 @@ export default function JoinPage() {
 
   // UX flags
   const [info, setInfo] = useState("");
-  const [sent, setSent] = useState(false);
+  the const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
   const [busy, setBusy] = useState(false);
   const [checkoutError, setCheckoutError] = useState("");
@@ -220,12 +220,13 @@ export default function JoinPage() {
       setBusy(true);
       setCheckoutError("");
 
-      // POST to API → /api/checkout
+      // POST to API → /api/checkout  (include `cycle`)
       const res = await fetch(`${API_BASE}/api/checkout`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          plan,
+          plan,                        // "member" | "pro"
+          cycle,                       // "month" | "year"  ← REQUIRED
           email: emailForCheckout || undefined,
           user_id: userId || undefined,
         }),
