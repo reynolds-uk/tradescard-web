@@ -21,10 +21,22 @@ const APP_URL =
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE ??
   "https://tradescard-api.vercel.app").replace(/\/$/, "");
 
-// Display prices (don’t hard-wire Stripe IDs here)
+// Display prices (purely for UI — not used for billing)
 const PRICE = {
   member: { month: 2.99, year: 29.0 },
   pro: { month: 7.99, year: 79.0 },
+} as const;
+
+// PUBLIC Stripe price ids for checkout (safe to expose; they’re not secrets)
+const PRICE_ID = {
+  member: {
+    month: process.env.NEXT_PUBLIC_STRIPE_PRICE_MEMBER_MONTH ?? "",
+    year: process.env.NEXT_PUBLIC_STRIPE_PRICE_MEMBER_YEAR ?? "",
+  },
+  pro: {
+    month: process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO_MONTH ?? "",
+    year: process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO_YEAR ?? "",
+  },
 } as const;
 
 const AUTH_ERROR_MAP: Record<string, string> = {
@@ -211,6 +223,11 @@ export default function JoinPage() {
     if (supaErr) throw supaErr;
   }
 
+  function getPriceId(plan: PaidPlan, c: Cycle) {
+    const id = PRICE_ID[plan][c];
+    return id || undefined;
+  }
+
   // The ONLY place that calls the checkout API
   async function startPaidCheckout(
     plan: PaidPlan,
@@ -221,16 +238,20 @@ export default function JoinPage() {
       setBusy(true);
       setCheckoutError("");
 
-      // POST to API → /api/checkout (now includes cycle)
+      const body = {
+        plan,
+        cycle,
+        email: emailForCheckout || undefined,
+        user_id: userId || undefined,
+        price_id: getPriceId(plan, cycle),
+        // only surface trial on Member monthly; API can ignore otherwise
+        trial: plan === "member" && cycle === "month" && showTrial ? true : false,
+      };
+
       const res = await fetch(`${API_BASE}/api/checkout`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          plan,                // "member" | "pro"
-          cycle,               // "month" | "year" – required by API to pick price
-          email: emailForCheckout || undefined,
-          user_id: userId || undefined,
-        }),
+        body: JSON.stringify(body),
       });
 
       if (!res.ok) {
@@ -244,7 +265,7 @@ export default function JoinPage() {
       // Track + redirect
       track(plan === "member" ? "join_member_click" : "join_pro_click", {
         cycle,
-        trial: showTrial,
+        trial: body.trial,
       });
       window.location.href = url;
     } catch (e: any) {
