@@ -224,9 +224,11 @@ function CompCard(props: {
 
       <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
         <PrimaryButton onClick={onJoin}>{ctaLabel}</PrimaryButton>
+
+        {/* Text link instead of a secondary button */}
         <button
           onClick={onPostal}
-          className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800"
+          className="text-sm underline decoration-neutral-600 underline-offset-2 hover:text-white text-left sm:text-right"
         >
           Postal entry (free)
         </button>
@@ -403,7 +405,7 @@ function PostalModal({
           <li>The specific TradeCard prize draw you wish to enter</li>
         </ul>
         <p className="mt-2 text-sm text-neutral-400">
-          Send to: <span className="text-neutral-200">TradeCard Prize Draws, PO Box 12345, London, EC1A 1AA</span>.
+          Send to: <span className="text-neutral-2 00">TradeCard Prize Draws, PO Box 12345, London, EC1A 1AA</span>.
           By entering, you accept the draw Terms and Rules published on this site.
         </p>
         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
