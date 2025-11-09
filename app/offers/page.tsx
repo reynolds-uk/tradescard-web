@@ -19,12 +19,12 @@ const API_BASE =
   "https://tradescard-api.vercel.app";
 
 type Tier = "access" | "member" | "pro";
-type NudgeSource = "banner" | "sticky" | "card";
+type NudgeSource = "banner" | "sticky" | "card" | "empty";
 
 export default function OffersPage() {
-  // Auth/membership
-  const me = useMe();                   // { user, tier, status }
-  const ready = useMeReady();           // avoid auth flash
+  // Auth / membership
+  const me = useMe();                 // { user, tier, status }
+  const ready = useMeReady();         // avoid auth flash
   const tier: Tier = (me?.tier as Tier) ?? "access";
   const isLoggedIn = !!me?.user;
   const isPaidTier = tier === "member" || tier === "pro";
@@ -34,55 +34,57 @@ export default function OffersPage() {
 
   // Where to bounce back after checkout/auth
   const next = "/offers";
-  const { busy, error } = useJoinActions(next);
+  const { busy, error: checkoutErr } = useJoinActions(next);
 
-  // Offers list
+  // Data
   const [items, setItems] = useState<Offer[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchErr, setFetchErr] = useState<string>("");
 
+  // UX: search + category filter
+  const [query, setQuery] = useState("");
+  const [cat, setCat] = useState<string>("All");
+
+  // Fetch offers
   useEffect(() => {
-    let aborted = false;
     if (!ready) return;
+    const ctrl = new AbortController();
 
     (async () => {
       try {
         setLoading(true);
         setFetchErr("");
 
-        // Paid = full catalogue; everyone else = access/teaser
         const url = isActivePaid
           ? `${API_BASE}/api/offers`
           : `${API_BASE}/api/offers?visibility=access`;
 
-        const res = await fetch(url, { cache: "no-store" });
-        if (!res.ok) throw new Error(`Offers failed: ${res.status}`);
+        const res = await fetch(url, {
+          cache: "no-store",
+          signal: ctrl.signal,
+        });
+        if (!res.ok) throw new Error(`Failed to load offers (${res.status})`);
 
         const data = (await res.json()) as unknown;
-        if (!aborted) setItems(Array.isArray(data) ? (data as Offer[]) : []);
+        setItems(Array.isArray(data) ? (data as Offer[]) : []);
       } catch (e) {
-        if (!aborted) {
-          setFetchErr(
-            e instanceof Error
-              ? e.message
-              : "Failed to load offers. Please try again."
-          );
-          setItems([]);
-        }
+        if (ctrl.signal.aborted) return;
+        setFetchErr(
+          e instanceof Error ? e.message : "Couldn’t load offers. Please try again."
+        );
+        setItems([]);
       } finally {
-        if (!aborted) setLoading(false);
+        if (!ctrl.signal.aborted) setLoading(false);
       }
     })();
 
-    return () => {
-      aborted = true;
-    };
+    return () => ctrl.abort();
   }, [ready, isActivePaid]);
 
   // Redemption rules:
-  // - Visitor (not logged in): prompt to Join Free (create Access account)
-  // - Access (logged in): CAN redeem displayed offers; sees upgrade nudges to get more offers
-  // - Paid: CAN redeem all displayed offers
+  // - Visitor: prompt to Join Free
+  // - Access (logged in): CAN redeem
+  // - Paid: CAN redeem
   const canRedeem = isLoggedIn;
 
   const handleUnlockPaid = (source: NudgeSource) => {
@@ -97,7 +99,6 @@ export default function OffersPage() {
 
   const redeem = (o: Offer) => {
     if (!canRedeem) {
-      // Visitor → prompt to create a free Access account
       handleJoinFree("card");
       return;
     }
@@ -121,9 +122,29 @@ export default function OffersPage() {
     return "See what’s on. Join free to redeem, upgrade to unlock more.";
   }, [ready, isActivePaid, isLoggedIn]);
 
+  // Category list (auto from feed)
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    items.forEach((o) => o.category && set.add(o.category));
+    return ["All", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
+  }, [items]);
+
+  // Apply filters
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return items.filter((o) => {
+      const catOk = cat === "All" || (o.category || "") === cat;
+      if (!q) return catOk;
+      const hay =
+        `${o.title ?? ""} ${o.merchant ?? ""} ${o.category ?? ""}`.toLowerCase();
+      return catOk && hay.includes(q);
+    });
+  }, [items, cat, query]);
+
+  // Skeleton?
   const showSkeleton = !ready || loading;
 
-  // Sticky mobile CTA logic:
+  // Sticky mobile CTA:
   // - Visitor: Join free + Try Member
   // - Access: Upgrade to unlock more (no Join free)
   // - Paid: none
@@ -132,6 +153,7 @@ export default function OffersPage() {
 
   return (
     <>
+      {/* Mobile sticky CTA */}
       {showSticky && (
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70 md:hidden">
           <div className="mx-auto max-w-5xl px-4 py-3 flex items-center justify-between gap-2">
@@ -172,18 +194,37 @@ export default function OffersPage() {
           }
         />
 
-        {fetchErr && (
-          <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300 text-sm">
-            {fetchErr}
+        {/* Top controls: category chips + search */}
+        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap gap-2">
+            {categories.map((c) => (
+              <button
+                key={c}
+                onClick={() => setCat(c)}
+                className={`rounded-full border px-3 py-1 text-sm ${
+                  cat === c
+                    ? "border-neutral-700 bg-neutral-800"
+                    : "border-neutral-800 bg-neutral-900 hover:bg-neutral-800"
+                }`}
+                aria-pressed={cat === c}
+              >
+                {c}
+              </button>
+            ))}
           </div>
-        )}
-        {error && (
-          <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300 text-sm">
-            {error}
+          <div className="flex items-center">
+            <input
+              type="search"
+              placeholder="Search offers…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="w-full sm:w-72 rounded border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+              aria-label="Search offers"
+            />
           </div>
-        )}
+        </div>
 
-        {/* Upgrade/Join nudge (desktop) */}
+        {/* Upgrade/Join nudge (desktop only to avoid duplication with sticky) */}
         {!isActivePaid && ready && (
           <div className="mb-4 hidden md:flex items-center justify-between rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
             <div className="text-sm text-neutral-300">
@@ -211,41 +252,66 @@ export default function OffersPage() {
           </div>
         )}
 
+        {/* Errors */}
+        {fetchErr && (
+          <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300 text-sm" role="alert">
+            {fetchErr}
+          </div>
+        )}
+        {checkoutErr && (
+          <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300 text-sm" role="alert">
+            {checkoutErr}
+          </div>
+        )}
+
         {/* Catalogue */}
         {showSkeleton ? (
           <div className="grid gap-3 md:grid-cols-3">
-            {Array.from({ length: 6 }).map((_, i) => (
+            {Array.from({ length: 9 }).map((_, i) => (
               <div
                 key={i}
                 className="h-28 rounded-xl border border-neutral-800 bg-neutral-900 animate-pulse"
               />
             ))}
           </div>
+        ) : filtered.length === 0 ? (
+          <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-6 text-sm text-neutral-300">
+            No offers match your filters.
+            {!isActivePaid && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {!isLoggedIn && (
+                  <button
+                    onClick={() => handleJoinFree("empty")}
+                    className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm hover:bg-neutral-800"
+                  >
+                    Join free
+                  </button>
+                )}
+                <PrimaryButton
+                  onClick={() => handleUnlockPaid("empty")}
+                  disabled={busy}
+                  className="px-3 py-1.5"
+                >
+                  {showTrial ? TRIAL_COPY : isLoggedIn ? "Unlock more" : "Try Member"}
+                </PrimaryButton>
+              </div>
+            )}
+          </div>
         ) : (
           <div className="grid gap-3 md:grid-cols-3">
-            {items.length === 0 ? (
-              <div className="col-span-full text-sm text-neutral-400">
-                No offers available right now. Please check back soon.
-              </div>
-            ) : (
-              items.map((o) => (
-                <OfferCard
-                  key={o.id}
-                  offer={o}
-                  onRedeem={() => redeem(o)}
-                  userTier={tier}                 // paid users won't see "PUBLIC" badge
-                  activePaid={isActivePaid}       // card can hide lock/teaser for paid
-                  // CTA for *visitors only*. Access users can redeem directly.
-                  ctaLabel={
-                    !isLoggedIn
-                      ? showTrial
-                        ? TRIAL_COPY
-                        : "Join free to redeem"
-                      : undefined
-                  }
-                />
-              ))
-            )}
+            {filtered.map((o) => (
+              <OfferCard
+                key={o.id}
+                offer={o}
+                onRedeem={() => redeem(o)}
+                userTier={tier}
+                activePaid={isActivePaid}
+                // CTA for visitors only (Access can redeem)
+                ctaLabel={
+                  !isLoggedIn ? (showTrial ? TRIAL_COPY : "Join free to redeem") : undefined
+                }
+              />
+            ))}
           </div>
         )}
       </Container>
