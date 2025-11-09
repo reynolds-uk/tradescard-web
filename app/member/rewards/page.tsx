@@ -4,8 +4,10 @@
 import { useEffect, useMemo, useState } from "react";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
+import PrimaryButton from "@/components/PrimaryButton";
 import { useMe } from "@/lib/useMe";
 import { useMeReady } from "@/lib/useMeReady";
+import Link from "next/link";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -28,33 +30,45 @@ export default function MemberRewardsPage() {
     (tier === "member" || tier === "pro") &&
     (me?.status === "active" || me?.status === "trialing");
 
-  const uid = useMemo(() => me?.user?.id ?? null, [me?.user?.id]);
+  const uid = me?.user?.id ?? null;
 
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<RewardsSummary | null>(null);
   const [error, setError] = useState<string>("");
 
-  // Fetch rewards once we *know* there is a user
+  // Tier multipliers
+  const boost = tier === "pro" ? 1.5 : tier === "member" ? 1.25 : 0;
+  const boostLabel = tier === "pro" ? "1.5×" : tier === "member" ? "1.25×" : "—";
+
+  // Derived entries (client-side estimate for display only)
+  const monthPoints = summary?.points_this_month ?? 0;
+  const lifetimePoints = summary?.lifetime_points ?? 0;
+  const monthEntries = isPaid ? Math.floor(monthPoints * boost) : 0;
+  const lifetimeEntries = isPaid ? lifetimePoints : 0; // lifetime draw = 1 entry per lifetime point
+
+  // Fixture placeholders (wire to DB later)
+  const now = new Date();
+  const currentPrizeClose = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const lifetimePrizeClose = new Date(now.getFullYear(), 11, 31);
+
+  // Fetch rewards once we *know* there is a user (and avoid doing it while auth is booting)
   useEffect(() => {
     if (!ready) return;
+
+    // If not signed in or not paid, we still render the page with a gentle message
     if (!uid) {
-      // Not signed in; nothing to fetch
       setSummary(null);
       setLoading(false);
       return;
     }
 
     let aborted = false;
-
     (async () => {
       try {
         setLoading(true);
         setError("");
 
-        const url = `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(
-          uid
-        )}`;
-
+        const url = `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(uid)}`;
         const res = await fetch(url, { cache: "no-store" });
         if (!res.ok) throw new Error(`rewards/summary ${res.status}`);
 
@@ -84,12 +98,9 @@ export default function MemberRewardsPage() {
   const subtitle = useMemo(() => {
     if (!ready) return "Loading…";
     if (!uid) return "Sign in to see your rewards.";
-    if (!isPaid) return "Become a paid member to earn points and monthly draw entries.";
-    return "Earn points every month you’re a paid member. Points convert to draw entries.";
+    if (!isPaid) return "Activate a membership to start earning points and entries.";
+    return "Your points and entries update automatically as you use TradeCard.";
   }, [ready, uid, isPaid]);
-
-  // Basic tier boost copy
-  const tierBoost = tier === "pro" ? "1.5×" : "1.25×";
 
   return (
     <Container>
@@ -114,39 +125,184 @@ export default function MemberRewardsPage() {
         </div>
       )}
 
-      {/* Content (only when ready & not loading) */}
+      {/* Content */}
       {ready && !loading && (
         <>
-          {uid && isPaid ? (
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
-                <div className="text-xs text-neutral-400 mb-1">Points this month (base)</div>
-                <div className="text-2xl font-semibold">
-                  {summary ? summary.points_this_month : "—"}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
-                <div className="text-xs text-neutral-400 mb-1">Tier boost</div>
-                <div className="text-2xl font-semibold">{tierBoost}</div>
-              </div>
-
-              <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
-                <div className="text-xs text-neutral-400 mb-1">Lifetime points</div>
-                <div className="text-2xl font-semibold">
-                  {summary ? summary.lifetime_points : "—"}
-                </div>
+          {!uid || !isPaid ? (
+            <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 text-sm text-neutral-300">
+              This area shows your member rewards once you’re signed in with an active membership.
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Link
+                  href="/offers"
+                  className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800"
+                >
+                  View offers
+                </Link>
+                <Link
+                  href="/join"
+                  className="rounded-xl bg-white px-3 py-2 text-sm text-black hover:bg-neutral-200"
+                >
+                  Join to start earning
+                </Link>
               </div>
             </div>
           ) : (
-            // Fallback if signed out or not paid (this page should usually be reached from paid area)
-            <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 text-sm text-neutral-300">
-              This area shows your member rewards once you’re signed in with an active
-              membership.
-            </div>
+            <>
+              {/* Stat tiles */}
+              <div className="grid gap-3 sm:grid-cols-3">
+                <Stat title="Points this month (base)" value={fmt(monthPoints)} />
+                <Stat title="Tier boost" value={boostLabel} />
+                <Stat title="Lifetime points" value={fmt(lifetimePoints)} />
+              </div>
+
+              {/* Entries breakdown */}
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <EntriesCard
+                  tone="primary"
+                  title="Current Prize entries"
+                  lines={[
+                    ["Base points this month", fmt(monthPoints)],
+                    ["Tier boost", boostLabel],
+                    ["Estimated entries", fmt(monthEntries)],
+                  ]}
+                  closes={currentPrizeClose}
+                />
+                <EntriesCard
+                  tone="amber"
+                  title="Lifetime Prize entries"
+                  lines={[
+                    ["Lifetime points", fmt(lifetimePoints)],
+                    ["Estimated entries", fmt(lifetimeEntries)],
+                  ]}
+                  closes={lifetimePrizeClose}
+                />
+              </div>
+
+              {/* Ways to earn more */}
+              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
+                <div className="mb-1 text-sm font-semibold">Ways to earn more</div>
+                <ul className="mt-1 grid gap-2 text-sm text-neutral-300 md:grid-cols-2">
+                  <li className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
+                    <div className="font-medium">Redeem offers</div>
+                    <p className="text-neutral-400">
+                      Earn activity points when you redeem partner deals.
+                    </p>
+                    <div className="mt-2">
+                      <Link
+                        href="/offers"
+                        className="inline-block rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs hover:bg-neutral-800"
+                      >
+                        Browse offers
+                      </Link>
+                    </div>
+                  </li>
+                  <li className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
+                    <div className="font-medium">Refer a mate</div>
+                    <p className="text-neutral-400">
+                      Get a points boost when your referral activates their membership.
+                    </p>
+                    <div className="mt-2">
+                      <Link
+                        href="/account/referrals"
+                        className="inline-block rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs hover:bg-neutral-800"
+                      >
+                        Get referral link
+                      </Link>
+                    </div>
+                  </li>
+                  <li className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
+                    <div className="font-medium">Stay on Pro</div>
+                    <p className="text-neutral-400">
+                      Keep the 1.5× boost. Long-tenure multipliers apply at 12+ months.
+                    </p>
+                    <div className="mt-2">
+                      <Link
+                        href="/account"
+                        className="inline-block rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs hover:bg-neutral-800"
+                      >
+                        Manage plan
+                      </Link>
+                    </div>
+                  </li>
+                  <li className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
+                    <div className="font-medium">Stay active</div>
+                    <p className="text-neutral-400">
+                      Periodic boosts for consecutive active months. Watch this space.
+                    </p>
+                  </li>
+                </ul>
+              </div>
+
+              {/* Small legal/clarity strip */}
+              <div className="mx-auto mt-6 grid max-w-3xl gap-2 text-center text-xs text-neutral-400 sm:grid-cols-3">
+                <div>Entries are estimates; final entries are confirmed at draw close.</div>
+                <div>Cancel any time in <span className="text-neutral-300">Manage billing</span>.</div>
+                <div>Postal entry available for each draw period.</div>
+              </div>
+            </>
           )}
         </>
       )}
     </Container>
   );
+}
+
+/* ----------------------------- components ----------------------------- */
+
+function Stat({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
+      <div className="mb-1 text-xs text-neutral-400">{title}</div>
+      <div className="text-2xl font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function EntriesCard({
+  tone,
+  title,
+  lines,
+  closes,
+}: {
+  tone?: "primary" | "amber";
+  title: string;
+  lines: [string, string][];
+  closes: Date;
+}) {
+  const border =
+    tone === "amber"
+      ? "border-amber-400/30 ring-1 ring-amber-400/15"
+      : "border-neutral-800";
+
+  const dateStr = closes.toLocaleDateString("en-GB", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+  });
+
+  return (
+    <div className={`rounded-2xl ${border} bg-neutral-900 p-4`}>
+      <div className="text-sm font-semibold">{title}</div>
+      <div className="mt-2 divide-y divide-neutral-800 rounded-xl border border-neutral-800 bg-neutral-950">
+        {lines.map(([k, v]) => (
+          <div key={k} className="flex items-center justify-between px-3 py-2 text-sm">
+            <span className="text-neutral-400">{k}</span>
+            <span className="font-medium">{v}</span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 text-xs text-neutral-500">Closes: {dateStr}</div>
+    </div>
+  );
+}
+
+/* ----------------------------- utils ----------------------------- */
+
+function fmt(n: number | string): string {
+  if (typeof n === "string") return n;
+  try {
+    return new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 }).format(n);
+  } catch {
+    return String(n);
+  }
 }

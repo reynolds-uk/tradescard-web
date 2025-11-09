@@ -23,7 +23,7 @@ export default function RewardsPage() {
 
   const showTrial = shouldShowTrial(me);
 
-  // Paid users go to the member view (no public promo flicker)
+  // Paid users go to the member view (no promo flicker)
   useEffect(() => {
     if (!ready || !isPaid) return;
     window.location.replace("/member/rewards");
@@ -39,8 +39,8 @@ export default function RewardsPage() {
 
   // Competition fixtures (placeholder dates; wire to DB later)
   const now = new Date();
-  const currentCloses = new Date(now.getFullYear(), now.getMonth() + 1, 1); // next month start
-  const lifetimeCloses = new Date(now.getFullYear(), 11, 31); // end of year (example)
+  const currentCloses = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const lifetimeCloses = new Date(now.getFullYear(), 11, 31);
 
   return (
     <Container>
@@ -56,8 +56,8 @@ export default function RewardsPage() {
         }
       />
 
-      {/* Progress & explainer */}
-      <ProgressStrip />
+      {/* Explainer (no personal counters on public page) */}
+      <Explainer />
 
       {/* Draws */}
       <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -114,7 +114,7 @@ export default function RewardsPage() {
         </div>
       </div>
 
-      {/* Tier ladder (Booking.com "levels" inspired, adapted for TradeCard) */}
+      {/* Tier ladder */}
       <Ladder />
 
       {/* FAQs */}
@@ -128,32 +128,16 @@ export default function RewardsPage() {
 
 /* =============================== components =============================== */
 
-function ProgressStrip() {
+function Explainer() {
   return (
     <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
-      <div className="grid gap-3 md:grid-cols-2">
-        <div>
-          <div className="text-sm font-semibold">How rewards work</div>
-          <p className="mt-1 text-sm text-neutral-300">
-            Earn <strong>monthly points</strong> from your plan and activity (e.g. redemptions, referrals).
-            Points convert to entries for prize draws. You also build <strong>lifetime points</strong> —
-            those count towards the ongoing Lifetime Prize.
-          </p>
-        </div>
-        {/* Placeholder “progress” visuals (wired later) */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
-            <div className="text-xs text-neutral-400">This month</div>
-            <div className="mt-1 text-2xl font-semibold">—</div>
-            <div className="text-xs text-neutral-500">Points (convert to entries)</div>
-          </div>
-          <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
-            <div className="text-xs text-neutral-400">Lifetime</div>
-            <div className="mt-1 text-2xl font-semibold">—</div>
-            <div className="text-xs text-neutral-500">Points (ongoing entries)</div>
-          </div>
-        </div>
-      </div>
+      <div className="text-sm font-semibold">How rewards work</div>
+      <ul className="mt-2 space-y-1 text-sm text-neutral-300">
+        <li>• Join <strong>Member</strong> or <strong>Pro</strong> to start earning monthly points.</li>
+        <li>• Points convert to entries for the current prize draw.</li>
+        <li>• Your <strong>lifetime points</strong> also count as entries for the ongoing Lifetime Prize.</li>
+        <li>• A <strong>free postal entry</strong> route is available for every draw period.</li>
+      </ul>
     </div>
   );
 }
@@ -307,7 +291,7 @@ function FaqBlock({ setOpenPostal }: { setOpenPostal: (b: boolean) => void }) {
       <div className="divide-y divide-neutral-800 rounded-2xl border border-neutral-800">
         <Faq
           q="How do I get entries?"
-          a="Points earned each month convert to entries for the current prize. Your lifetime points also act as ongoing entries for the Lifetime Prize."
+          a="Points earned each month convert to entries for the current prize. Your lifetime points also act as entries for the ongoing Lifetime Prize."
         />
         <Faq
           q="Do I need to buy anything to enter?"
