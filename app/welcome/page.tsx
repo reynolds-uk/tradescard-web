@@ -11,7 +11,6 @@ import PrimaryButton from "@/components/PrimaryButton";
 import { useMe } from "@/lib/useMe";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 import { track } from "@/lib/track";
-import { normaliseToE164, isLikelyE164 } from "@/lib/phone";
 
 type Tier = "access" | "member" | "pro";
 
@@ -34,7 +33,7 @@ const TIER_COPY: Record<Tier, { label: string; blurb: string }> = {
 };
 
 export default function WelcomePage() {
-  const me = useMe(); // { ready, user, tier, status, profile? }
+  const me = useMe(); // { ready, user?, tier?, status? }
   const user = me.user;
   const tier: Tier = (me.tier as Tier) ?? "access";
 
@@ -59,13 +58,29 @@ export default function WelcomePage() {
   const showTrial = shouldShowTrial(me as any);
   const accessCta = showTrial ? TRIAL_COPY : "Become a Member (£2.99/mo)";
 
-  // Pre-fill if profile already has data
+  // Pre-fill from DB if the user exists
   useEffect(() => {
-    if (!me?.profile) return;
-    setName(me.profile.name ?? "");
-    // @ts-expect-error phone may not exist pre-migration
-    setPhone(me.profile.phone ?? "");
-  }, [me?.profile]);
+    if (!user?.id) return;
+
+    let aborted = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("name, phone")
+        .eq("user_id", user.id)
+        .single();
+
+      if (!aborted && !error && data) {
+        setName(data.name ?? "");
+        // phone column may be newly added — handle undefined gracefully
+        setPhone((data as any).phone ?? "");
+      }
+    })();
+
+    return () => {
+      aborted = true;
+    };
+  }, [user?.id, supabase]);
 
   function maskedId(id?: string) {
     return id ? `${id.slice(0, 6)}…${id.slice(-4)}` : "—";
@@ -90,28 +105,29 @@ export default function WelcomePage() {
     }
   }
 
+  // Basic UK-ish phone validator (lenient)
+  const isValidPhone = (v: string) => {
+    const s = v.replace(/[\s\-\(\)]/g, "");
+    return /^(\+?\d{10,15})$/.test(s);
+  };
+
   async function saveAndContinue() {
     if (!user?.id) return;
 
     setError("");
-
-    // Normalise to E.164 with GB default and validate
-    const phoneE164 = phone ? normaliseToE164(phone, "GB") : "";
-    const needsPhone = tier === "member" || tier === "pro";
-    if (needsPhone && !isLikelyE164(phoneE164)) {
-      setError("Please enter a valid mobile number so we can contact you about rewards.");
+    if ((tier === "member" || tier === "pro") && !isValidPhone(phone)) {
+      setError("Please enter a valid phone number so we can contact you about rewards.");
       return;
     }
 
     setSaving(true);
     try {
-      // Upsert minimal profile fields
       const { error: upErr } = await supabase
         .from("profiles")
         .update({
           name: name || null,
-          // @ts-expect-error column exists post-migration
-          phone: phoneE164 || null,
+          // phone column assumed present via migration
+          phone: phone || null,
           updated_at: new Date().toISOString(),
         })
         .eq("user_id", user.id);
@@ -119,9 +135,8 @@ export default function WelcomePage() {
       if (upErr) throw upErr;
 
       setSavedOnce(true);
-      track("welcome_profile_saved", { tier, has_phone: !!phoneE164 });
+      track("welcome_profile_saved", { tier, has_phone: !!phone });
 
-      // Route on: free → offers; paid → account
       if (tier === "access") window.location.href = "/offers";
       else window.location.href = "/account";
     } catch (e: any) {
@@ -197,30 +212,18 @@ export default function WelcomePage() {
             <p className="mt-1 text-sm text-neutral-300">{TIER_COPY[tier].blurb}</p>
 
             <div className="mt-3 grid gap-2">
-              <Link
-                href="/offers"
-                onClick={() => track("welcome_cta_offers", { tier })}
-                className="block"
-              >
+              <Link href="/offers" className="block">
                 <PrimaryButton className="w-full">Browse offers</PrimaryButton>
               </Link>
 
               {tier !== "access" ? (
                 <>
-                  <Link
-                    href="/benefits"
-                    onClick={() => track("welcome_cta_benefits", { tier })}
-                    className="block"
-                  >
+                  <Link href="/benefits" className="block">
                     <button className="w-full rounded-xl border border-neutral-700 bg-neutral-900 px-4 py-2 font-medium hover:bg-neutral-800">
                       See your benefits
                     </button>
                   </Link>
-                  <Link
-                    href="/rewards"
-                    onClick={() => track("welcome_cta_rewards", { tier })}
-                    className="block"
-                  >
+                  <Link href="/rewards" className="block">
                     <button className="w-full rounded-xl border border-neutral-700 bg-neutral-900 px-4 py-2 font-medium hover:bg-neutral-800">
                       Check rewards
                     </button>
