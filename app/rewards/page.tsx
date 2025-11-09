@@ -23,7 +23,7 @@ export default function RewardsPage() {
 
   const showTrial = shouldShowTrial(me);
 
-  // Paid users go to the member view (no promo flicker)
+  // Paid users → direct member view (avoids promo flicker)
   useEffect(() => {
     if (!ready || !isPaid) return;
     window.location.replace("/member/rewards");
@@ -37,17 +37,17 @@ export default function RewardsPage() {
   // Postal modal
   const [openPostal, setOpenPostal] = useState(false);
 
-  // Competition fixtures (placeholder dates; wire to DB later)
+  // Fixtures (placeholder dates; wire to DB later)
   const now = new Date();
   const currentCloses = new Date(now.getFullYear(), now.getMonth() + 1, 1);
   const lifetimeCloses = new Date(now.getFullYear(), 11, 31);
 
-  // Show sticky CTA on public view only
+  // Sticky CTA only on public view
   const showSticky = ready && !isPaid;
 
   return (
     <>
-      {/* Sticky CTA for visitors (mobile) */}
+      {/* Sticky CTA (mobile) */}
       {showSticky && (
         <div
           className="md:hidden fixed inset-x-0 bottom-0 z-40 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70"
@@ -80,10 +80,10 @@ export default function RewardsPage() {
           }
         />
 
-        {/* Explainer (no personal counters on public page) */}
+        {/* Public explainer */}
         <Explainer />
 
-        {/* Draws */}
+        {/* Current & lifetime prize cards */}
         <div className="mt-4 grid gap-4 md:grid-cols-2">
           <CompCard
             tone="primary"
@@ -224,8 +224,6 @@ function CompCard(props: {
 
       <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
         <PrimaryButton onClick={onJoin}>{ctaLabel}</PrimaryButton>
-
-        {/* Text link instead of a secondary button */}
         <button
           onClick={onPostal}
           className="text-sm underline decoration-neutral-600 underline-offset-2 hover:text-white text-left sm:text-right"
@@ -405,7 +403,7 @@ function PostalModal({
           <li>The specific TradeCard prize draw you wish to enter</li>
         </ul>
         <p className="mt-2 text-sm text-neutral-400">
-          Send to: <span className="text-neutral-2 00">TradeCard Prize Draws, PO Box 12345, London, EC1A 1AA</span>.
+          Send to: <span className="text-neutral-200">TradeCard Prize Draws, PO Box 12345, London, EC1A 1AA</span>.
           By entering, you accept the draw Terms and Rules published on this site.
         </p>
         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">

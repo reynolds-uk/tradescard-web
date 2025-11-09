@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import PrimaryButton from "@/components/PrimaryButton";
@@ -14,14 +15,11 @@ type Tier = "access" | "member" | "pro";
 type Benefit = {
   id: string;
   title: string;
-  description: string;
+  description: string | null;
   tier: Tier;
+  is_active?: boolean;
+  priority?: number;
 };
-
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_API_BASE ||
-  "https://tradescard-api.vercel.app";
 
 export default function MemberBenefitsPage() {
   const me = useMe();
@@ -32,22 +30,31 @@ export default function MemberBenefitsPage() {
     (tier === "member" || tier === "pro") &&
     (me?.status === "active" || me?.status === "trialing");
 
-  // If user somehow isn’t paid (e.g., stale cookie)
+  // If somehow not paid (stale cookie etc.), bounce to public preview
   useEffect(() => {
-    if (ready && !isPaid) {
-      window.location.replace("/benefits");
-    }
+    if (!ready) return;
+    if (!isPaid) window.location.replace("/benefits");
   }, [ready, isPaid]);
 
-  const subtitle = useMemo(() => {
-    if (!ready) return "Loading…";
-    if (tier === "pro") return "Your Pro benefits are listed below.";
-    return "Your Member benefits are listed below. Upgrade to Pro for more.";
-  }, [ready, tier]);
+  const subtitle =
+    !ready
+      ? "Loading…"
+      : tier === "pro"
+      ? "Your Pro benefits are listed below."
+      : "Your Member benefits are listed below. Upgrade to Pro for more.";
 
-  // -----------------------------
-  // Fetch benefits for paid users
-  // -----------------------------
+  // ──────────────────────────────────────────────────────
+  // Fetch benefits directly from Supabase (active only)
+  // ──────────────────────────────────────────────────────
+  const supabase = useMemo(
+    () =>
+      createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      ),
+    []
+  );
+
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>("");
   const [benefits, setBenefits] = useState<Benefit[]>([]);
@@ -59,58 +66,31 @@ export default function MemberBenefitsPage() {
     (async () => {
       setLoading(true);
       setErr("");
+
       try {
-        const candidates = [
-          `${API_BASE}/api/benefits`,
-          `${API_BASE}/api/members/benefits`,
-        ];
+        // Pull all active benefits and order by priority (desc), then title
+        const { data, error } = await supabase
+          .from("benefits")
+          .select("id,title,description,tier,is_active,priority")
+          .eq("is_active", true)
+          .order("priority", { ascending: false })
+          .order("title", { ascending: true });
 
-        let got: Benefit[] = [];
-        for (const url of candidates) {
-          try {
-            const res = await fetch(url, { cache: "no-store" });
-            if (!res.ok) continue;
-            const json = await res.json();
-            if (Array.isArray(json)) {
-              got = json;
-              break;
-            }
-            if (Array.isArray(json?.benefits)) {
-              got = json.benefits;
-              break;
-            }
-          } catch {
-            // try next
-          }
-        }
+        if (error) throw error;
 
-        // Fallback demo data
-        if (!got.length) {
-          got = [
-            {
-              id: "protect-lite",
-              title: "Protect Lite",
-              description: "Purchase protection and dispute help on eligible redemptions.",
-              tier: "member",
-            },
-            {
-              id: "priority-support",
-              title: "Priority Support",
-              description: "Faster help when you need us most.",
-              tier: "member",
-            },
-            {
-              id: "early-access",
-              title: "Early-access deals",
-              description: "Get first dibs on limited-quantity offers.",
-              tier: "pro",
-            },
-          ];
-        }
+        // Guard against nulls
+        const rows: Benefit[] = (data ?? []).map((b: any) => ({
+          id: b.id,
+          title: b.title,
+          description: b.description ?? null,
+          tier: (b.tier as Tier) || "member",
+          is_active: b.is_active,
+          priority: b.priority ?? 0,
+        }));
 
-        if (!aborted) setBenefits(got);
-      } catch (e) {
-        if (!aborted) setErr(e instanceof Error ? e.message : "Couldn’t load benefits.");
+        if (!aborted) setBenefits(rows);
+      } catch (e: any) {
+        if (!aborted) setErr(e?.message || "Couldn’t load benefits.");
       } finally {
         if (!aborted) setLoading(false);
       }
@@ -119,12 +99,12 @@ export default function MemberBenefitsPage() {
     return () => {
       aborted = true;
     };
-  }, [ready, isPaid]);
+  }, [ready, isPaid, supabase]);
 
-  const visibleBenefits = useMemo(
-    () => benefits.filter((b) => tier === "pro" || b.tier === "member"),
-    [benefits, tier]
-  );
+  // Only show benefits the user’s tier unlocks
+  const visibleBenefits = useMemo(() => {
+    return benefits.filter((b) => (tier === "pro" ? true : b.tier !== "pro"));
+  }, [benefits, tier]);
 
   return (
     <Container>
@@ -136,36 +116,64 @@ export default function MemberBenefitsPage() {
         </div>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {loading && (
-          <div className="text-neutral-400 text-sm">Loading your benefits…</div>
-        )}
+      {loading && (
+        <div className="text-neutral-400 text-sm">Loading your benefits…</div>
+      )}
 
-        {!loading && visibleBenefits.length === 0 && (
-          <div className="text-neutral-400 text-sm">
-            No active benefits found for your plan.
-          </div>
-        )}
+      {!loading && visibleBenefits.length === 0 && (
+        <div className="text-neutral-400 text-sm">
+          No active benefits found for your plan.
+        </div>
+      )}
 
+      <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {visibleBenefits.map((b) => (
-          <div
-            key={b.id}
-            className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4"
-          >
-            <div className="text-sm font-semibold mb-1">{b.title}</div>
-            <p className="text-neutral-400 text-sm">{b.description}</p>
-          </div>
+          <BenefitCard key={b.id} benefit={b} tier={tier} />
         ))}
       </div>
 
       {tier === "member" && (
         <div className="mt-6 flex items-center justify-between rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
           <div className="text-sm text-neutral-300">
-            Unlock Pro-only benefits such as early-access deals.
+            Unlock Pro-only benefits such as early access and Pro-exclusive offers.
           </div>
-          <PrimaryButton onClick={() => routeToJoin("pro")}>Upgrade to Pro</PrimaryButton>
+          <PrimaryButton onClick={() => routeToJoin("pro")}>
+            Upgrade to Pro
+          </PrimaryButton>
         </div>
       )}
     </Container>
+  );
+}
+
+/* ──────────────────────────────
+   Components
+   ────────────────────────────── */
+
+function BenefitCard({ benefit, tier }: { benefit: Benefit; tier: Tier }) {
+  const proOnly = benefit.tier === "pro";
+  return (
+    <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <div className="text-sm font-semibold">{benefit.title}</div>
+        {proOnly ? (
+          <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[11px] text-amber-300">
+            Pro only
+          </span>
+        ) : (
+          <span className="rounded-full border border-neutral-700 bg-neutral-800/60 px-2 py-0.5 text-[11px] text-neutral-300">
+            Included
+          </span>
+        )}
+      </div>
+      {benefit.description && (
+        <p className="text-neutral-400 text-sm">{benefit.description}</p>
+      )}
+      {proOnly && tier === "member" && (
+        <div className="mt-3 text-xs text-neutral-500">
+          Upgrade to Pro to unlock this benefit.
+        </div>
+      )}
+    </div>
   );
 }

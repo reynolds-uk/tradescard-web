@@ -21,13 +21,17 @@ export default function BenefitsPage() {
 
   const tier: Tier = (me?.tier as Tier) ?? "access";
   const isPaidTier = tier === "member" || tier === "pro";
-  const isPaid = isPaidTier && (me?.status === "active" || me?.status === "trialing");
+  const isPaid =
+    isPaidTier && (me?.status === "active" || me?.status === "trialing");
+
   const showTrial = shouldShowTrial(me);
 
-  // Redirect paid users to their member experience
+  // Redirect paid users to their member experience (server-gated there)
   useEffect(() => {
-    if (ready && isPaid) router.replace("/member/benefits");
-  }, [ready, isPaid, router]);
+    if (!ready) return;
+    if (isPaid) router.replace("/member/benefits");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, isPaid]);
 
   // While redirecting, keep UX calm
   if (ready && isPaid) {
@@ -38,35 +42,37 @@ export default function BenefitsPage() {
     );
   }
 
-  // Logged out / Access: promotional view
-  const showSticky = true; // always show bottom CTA on public view
+  // Public view (logged out or Access)
+  const showSticky = ready && !isPaid;
 
   return (
     <>
       {/* Mobile sticky CTA with iOS safe-area clearance */}
-      <div
-        className="md:hidden fixed inset-x-0 bottom-0 z-40 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70"
-        role="region"
-        aria-label="Unlock included benefits"
-      >
-        <div className="safe-inset-bottom" />
-        <div className="mx-auto max-w-5xl px-4 py-3 flex items-center justify-between gap-2">
-          <div className="text-xs text-neutral-300">Unlock included benefits</div>
-          <PrimaryButton
-            onClick={() => routeToJoin("member")}
-            className="text-xs px-3 py-1.5"
-          >
-            {showTrial ? TRIAL_COPY : "Become a Member"}
-          </PrimaryButton>
+      {showSticky && (
+        <div
+          className="md:hidden fixed inset-x-0 bottom-0 z-40 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70"
+          role="region"
+          aria-label="Unlock included benefits"
+        >
+          <div className="safe-inset-bottom" />
+          <div className="mx-auto max-w-5xl px-4 py-3 flex items-center justify-between gap-2">
+            <div className="text-xs text-neutral-300">Unlock included benefits</div>
+            <PrimaryButton
+              onClick={() => routeToJoin("member")}
+              className="text-xs px-3 py-1.5"
+            >
+              {showTrial ? TRIAL_COPY : "Become a Member"}
+            </PrimaryButton>
+          </div>
         </div>
-      </div>
+      )}
 
       <Container className={showSticky ? "safe-bottom-pad md:pb-10" : "pb-10"}>
         <PageHeader
           title="Member Benefits"
           subtitle="Built for busy trades — get protection, rewards and exclusive pricing from day one."
           aside={
-            showTrial ? (
+            !isPaid && showTrial ? (
               <span className="hidden sm:inline rounded bg-amber-400/20 text-amber-200 text-xs px-2 py-1 border border-amber-400/30">
                 {TRIAL_COPY}
               </span>
@@ -78,7 +84,7 @@ export default function BenefitsPage() {
         <section className="mb-5 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 text-sm leading-snug md:text-base">
           <ol className="list-decimal pl-5 text-neutral-300 space-y-1">
             <li>
-              Join as <span className="text-neutral-100 font-medium">Member</span> or{" "}
+              Join <span className="text-neutral-100 font-medium">Member</span> or{" "}
               <span className="text-neutral-100 font-medium">Pro</span>.
             </li>
             <li>Access included benefits straight away in the app.</li>
@@ -87,7 +93,7 @@ export default function BenefitsPage() {
           </ol>
         </section>
 
-        {/* Benefits grid */}
+        {/* Benefits grid (public preview copy; real content behind /member/benefits) */}
         <section className="grid gap-3 md:grid-cols-3">
           <BenefitCard
             title="Protect Lite (included)"
