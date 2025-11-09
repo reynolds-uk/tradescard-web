@@ -1,78 +1,75 @@
 // app/components/useJoinActions.ts
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { useMe } from "@/lib/useMe";
-import { shouldShowTrial } from "@/lib/trial";
-
-type Plan = "member" | "pro";
-type Interval = "month" | "year";
+import { useMeReady } from "@/lib/useMeReady";
+import { routeToJoin } from "@/lib/routeToJoin";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://tradescard-api.vercel.app";
 
-/**
- * Helper for join/checkout flows.
- * Returns busy/error state and a startMembership() that:
- *  - Redirects logged-out users to /join with intent stored
- *  - Calls /api/checkout for logged-in users (monthly/yearly + optional trial)
- */
-export function useJoinActions(next: string = "/welcome") {
+type Cycle = "month" | "year";
+type Plan = "member" | "pro";
+
+export function useJoinActions(source: string = "/join") {
   const me = useMe();
+  const ready = useMeReady();
+
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<string>("");
 
-  // precompute default trial flag based on current user/tier
-  const defaultTrial = useMemo(() => shouldShowTrial(me), [me]);
-
-  async function startMembership(
-    plan: Plan,
-    interval: Interval = "month",
-    opts?: { trial?: boolean }
-  ) {
-    try {
-      setBusy(true);
+  const startMembership = useCallback(
+    async (plan: Plan, cycle: Cycle, opts?: { trial?: boolean; next?: string }) => {
       setError("");
 
-      // Not signed in → stash intent and bounce to /join
-      if (!me?.user) {
-        try {
-          window.localStorage.setItem("join_wanted_plan", plan);
-        } catch {
-          /* no-op */
-        }
-        const url = new URL("/join", window.location.origin);
-        url.searchParams.set("plan", plan);
-        window.location.href = url.toString();
+      // Wait for auth to be known
+      if (!ready) {
+        setError("Checking your account…");
         return;
       }
 
-      // Logged in → hit checkout API
-      const res = await fetch(`${API_BASE}/api/checkout`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: me.user.id,
-          email: me.email,
-          plan,
-          interval,              // "month" | "year"
-          trial: opts?.trial ?? defaultTrial,
-          next,                  // where to return after checkout
-        }),
-        keepalive: true,
-      });
+      // If not signed in, bounce to /join flow (open inline email there)
+      if (!me?.user || !me?.email) {
+        routeToJoin(plan); // preserves intent in the UI
+        return;
+      }
 
-      const json = await res.json().catch(() => ({} as { url?: string; error?: string }));
-      if (!res.ok || !json.url) throw new Error(json?.error || "Checkout failed");
-      window.location.href = json.url;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not start checkout");
-    } finally {
-      setBusy(false);
-    }
-  }
+      try {
+        setBusy(true);
+
+        const res = await fetch(`${API_BASE}/api/checkout`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user_id: me.user.id,
+            email: me.email,
+            plan,
+            billing: cycle === "year" ? "annual" : "monthly",
+            trial: !!opts?.trial,
+            next: opts?.next || "/welcome",
+            source, // diagnostic only
+          }),
+          keepalive: true,
+        });
+
+        const json = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+
+        if (!res.ok || !json?.url) {
+          throw new Error(json?.error || `Checkout failed (${res.status})`);
+        }
+
+        window.location.href = json.url!;
+      } catch (e: any) {
+        setError(e?.message || "Couldn’t open checkout.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [ready, me?.user, me?.email, source]
+  );
 
   return { busy, error, startMembership };
 }
