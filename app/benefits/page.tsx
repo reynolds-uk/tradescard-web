@@ -93,55 +93,38 @@ export default function BenefitsPage() {
           </ol>
         </section>
 
-        {/* Benefits grid (public preview copy; real content behind /member/benefits) */}
-        <section className="grid gap-3 md:grid-cols-3">
-          <BenefitCard
-            title="Protect Lite (included)"
-            lines={[
-              "Purchase protection on eligible redemptions",
-              "Dispute help if things go wrong",
-              "Simple claims via the app",
-            ]}
-            tag="Included with Member"
-          />
-          <BenefitCard
-            title="Priority support"
-            lines={[
-              "Faster responses when you need us",
-              "Email + in-app priority routing",
-            ]}
-            tag="Included with Member"
-          />
-          <BenefitCard
-            title="Exclusive pricing"
-            lines={[
-              "Lower rates with selected partners",
-              "Tools, fuel, food & business essentials",
-              "New partners added regularly",
-            ]}
-            tag="Member & Pro pricing"
-            accent
-          />
-        </section>
-
-        {/* CTA strip */}
-        <section className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-sm text-neutral-300">
-            Ready to unlock benefits? Start with <span className="text-neutral-100">Member</span>{" "}
-            or go <span className="text-neutral-100">Pro</span>.
-          </div>
-          <div className="flex gap-2">
-            <PrimaryButton onClick={() => routeToJoin("member")}>
-              {showTrial ? TRIAL_COPY : "Become a Member"}
-            </PrimaryButton>
-            <button
-              onClick={() => routeToJoin("pro")}
-              className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800"
-            >
-              Go Pro
-            </button>
-          </div>
-        </section>
+        {/* Benefits grid */}
+<TierGate gate="paid" title="Members only" blurb="Join to unlock benefits and member-only pricing.">
+  <section className="grid gap-3 md:grid-cols-3">
+    <BenefitCard
+      title="Protect Lite (included)"
+      lines={[
+        "Purchase protection on eligible redemptions",
+        "Dispute help if things go wrong",
+        "Simple claims via the app",
+      ]}
+      tag="Included with Member"
+    />
+    <BenefitCard
+      title="Priority support"
+      lines={[
+        "Faster responses when you need us",
+        "Email + in-app priority routing",
+      ]}
+      tag="Included with Member"
+    />
+    <BenefitCard
+      title="Exclusive pricing"
+      lines={[
+        "Lower rates with selected partners",
+        "Tools, fuel, food & business essentials",
+        "New partners added regularly",
+      ]}
+      tag="Member & Pro pricing"
+      accent
+    />
+  </section>
+</TierGate>
 
         {/* FAQ */}
         <section className="mt-6">
