@@ -9,15 +9,15 @@ import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import PrimaryButton from "@/components/PrimaryButton";
 import { useMe } from "@/lib/useMe";
-import { useJoinActions } from "@/components/useJoinActions";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 import { track } from "@/lib/track";
 
 type Plan = "access" | "member" | "pro";
 type Cycle = "month" | "year";
 
-const APP_URL =
-  process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
+const API_BASE = (process.env.NEXT_PUBLIC_API_BASE ??
+  "https://tradescard-api.vercel.app").replace(/\/$/, "");
 
 // Display prices (don’t hard-wire Stripe IDs here)
 const PRICE = {
@@ -52,9 +52,6 @@ export default function JoinPage() {
   const me = useMe();
   const showTrial = shouldShowTrial(me);
 
-  // Checkout helper (startMembership(plan, cycle, { trial }))
-  const { busy, error: checkoutError, startMembership } = useJoinActions("/join");
-
   // Tabs & cycle
   const [tab, setTab] = useState<"join" | "signin">("join");
   const [cycle, setCycle] = useState<Cycle>("month");
@@ -75,6 +72,8 @@ export default function JoinPage() {
   const [info, setInfo] = useState("");
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [checkoutError, setCheckoutError] = useState("");
 
   // Refs
   const paidInputRef = useRef<HTMLInputElement>(null);
@@ -181,18 +180,16 @@ export default function JoinPage() {
   }, [tab]);
 
   /* ---------------------------------------------------------
-     If already signed in, continue checkout or go to /offers
+     If already signed in and a paid plan is open, go to Stripe
   ----------------------------------------------------------*/
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getSession();
       if (!data?.session?.user) return;
+      if (!openInline) return;
 
-      if (openInline) {
-        await startMembership(openInline, cycle, { trial: showTrial });
-        return;
-      }
-      router.replace("/offers");
+      // Logged in: use account email + user id
+      await startPaidCheckout(openInline, data.session.user.email ?? "", data.session.user.id);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openInline]);
@@ -212,7 +209,45 @@ export default function JoinPage() {
     if (supaErr) throw supaErr;
   }
 
-  // Free (Access) sign-up
+  async function startPaidCheckout(
+    plan: Exclude<Plan, "access">,
+    emailForCheckout: string,
+    userId?: string
+  ) {
+    try {
+      setBusy(true);
+      setCheckoutError("");
+
+      // POST to API → /api/checkout
+      const res = await fetch(`${API_BASE}/api/checkout`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          plan,
+          email: emailForCheckout || undefined,
+          user_id: userId || undefined,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({} as any));
+        throw new Error(err?.message || "Unable to start checkout");
+      }
+
+      const { url } = (await res.json()) as { url?: string };
+      if (!url) throw new Error("No checkout URL returned");
+
+      // Track + redirect
+      track(plan === "member" ? "join_member_click" : "join_pro_click", { cycle, trial: showTrial });
+      window.location.href = url;
+    } catch (e: any) {
+      setCheckoutError(e?.message || "We couldn’t start checkout. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Free (Access) sign-up (kept as magic-link)
   async function handleFreeJoin() {
     setInfo("");
     try {
@@ -234,45 +269,34 @@ export default function JoinPage() {
     }
   }
 
-  // Choose a paid plan (from cards or sticky CTA)
+  // Choose paid plan
   async function choose(plan: Exclude<Plan, "access">) {
     setInfo("");
-    // Logged out → open inline on that card, close free
-    if (!me.user) {
+    const { data } = await supabase.auth.getSession();
+
+    if (!data?.session?.user) {
+      // Logged out → open inline email capture for card-first checkout
       setOpenInline(plan);
       setFreeOpen(false);
       setSelectedPlan(plan);
       queueMicrotask(() => paidInputRef.current?.focus());
       return;
     }
-    // Logged in → straight to checkout
-    track(plan === "member" ? "join_member_click" : "join_pro_click", {
-      trial: showTrial,
-      cycle,
-    });
-    await startMembership(plan, cycle, { trial: showTrial });
+
+    // Logged in → go straight to Stripe using account email + user id
+    await startPaidCheckout(plan, data.session.user.email ?? "", data.session.user.id);
   }
 
-  // Send link for paid inline (then continue to chosen plan after sign-in)
-  async function handlePaidLink() {
+  // Submit paid email inline (logged-out card-first)
+  async function handlePaidContinue() {
     if (!openInline) return;
     setInfo("");
     try {
-      setSending(true);
-      await sendMagicLink(emailPaid, "/join"); // return here so we can resume checkout
-      setSent(true);
-      setInfo(`Link sent. After you sign in, we’ll continue to ${openInline} (${cycle}).`);
-      track("join_free_click"); // reuse event for "send link"
-    } catch (e) {
-      setSent(false);
-      setInfo(
-        (e as Error)?.message === "invalid_email"
-          ? "Enter a valid email to get your sign-in link."
-          : "We couldn’t send the link just now. Please try again."
-      );
+      if (!isValidEmail(emailPaid)) throw new Error("Enter a valid email address.");
+      await startPaidCheckout(openInline, emailPaid);
+    } catch (e: any) {
+      setCheckoutError(e?.message || "We couldn’t start checkout. Please try again.");
       paidInputRef.current?.focus();
-    } finally {
-      setSending(false);
     }
   }
 
@@ -390,19 +414,16 @@ export default function JoinPage() {
         ? `Choose Member – ${price}`
         : `Choose Pro – ${price}`;
 
-    // Only select via the explicit radio, not the whole card (prevents input blur)
     const selectThisPlan = () => {
       if (!selected) setSelectedPlan(plan);
     };
 
-    // Prevent bubbling from inputs to any parent handlers
     const stop = (e: any) => e.stopPropagation();
 
     return (
       <div className={`rounded-2xl border ${accentCls} bg-neutral-900 p-4`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {/* Radio-like control */}
             <button
               type="button"
               aria-pressed={selected}
@@ -458,17 +479,17 @@ export default function JoinPage() {
               autoFocus
               value={emailPaid}
               onChange={(e) => setEmailPaid(e.target.value)}
-              onKeyDown={onEnter(handlePaidLink)}
+              onKeyDown={onEnter(handlePaidContinue)}
               onClick={stop}
               onFocus={stop}
               onMouseDown={stop}
               className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
             />
-            <PrimaryButton onClick={handlePaidLink} disabled={busy || sending}>
-              {sent ? "Link sent ✓" : sending ? "Sending…" : "Send sign-in link"}
+            <PrimaryButton onClick={handlePaidContinue} disabled={busy}>
+              {busy ? "Starting checkout…" : "Continue to payment"}
             </PrimaryButton>
             <p className="col-span-full text-xs text-neutral-500">
-              We’ll continue to <strong>{title}</strong> ({cycle}) after you sign in.
+              We’ll take you to secure checkout. You’ll return here after payment.
             </p>
           </div>
         )}
@@ -645,11 +666,6 @@ export default function JoinPage() {
               </div>
               <div className="mt-2 text-xs text-neutral-500">
                 No card details needed • You’ll return to /offers after sign-in
-                {openInline && (
-                  <span className="ml-2 text-neutral-400">
-                    (We’ll continue to <strong>{openInline}</strong> after you sign in)
-                  </span>
-                )}
               </div>
             </div>
           </>
