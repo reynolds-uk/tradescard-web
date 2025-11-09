@@ -39,6 +39,76 @@ const TIER_COPY: Record<Tier, { label: string; blurb: string }> = {
   },
 };
 
+/** Small embedded component so it’s easy to extract later if you want */
+function ActivateOverlay({
+  email,
+  info,
+  onResend,
+  canResend,
+  countdown,
+  resending,
+}: {
+  email: string | null;
+  info?: string;
+  onResend: () => void;
+  canResend: boolean;
+  countdown: number;
+  resending: boolean;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      aria-modal="true"
+      role="dialog"
+      aria-label="Activate your account"
+    >
+      <div className="mx-4 w-full max-w-lg rounded-2xl border border-amber-400/30 bg-neutral-950 p-6 text-neutral-100 shadow-2xl">
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-amber-400/30 bg-amber-400/10">
+          <svg viewBox="0 0 24 24" className="h-6 w-6" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7zm2 0v.3l7 4.2 7-4.2V7H5zm14 2.7-7 4.2-7-4.2V17h14V9.7z"
+            />
+          </svg>
+        </div>
+
+        <h1 className="text-center text-xl font-semibold">Check your email to activate</h1>
+        <p className="mt-2 text-center text-neutral-200">
+          We’ve sent a secure sign-in link to{" "}
+          <span className="font-mono">{email ?? "—"}</span>. Click it to confirm your account — then
+          return here to finish setup.
+        </p>
+
+        {info && <p className="mt-2 text-center text-neutral-400 text-sm">{info}</p>}
+
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+          <button
+            onClick={onResend}
+            disabled={!canResend || resending}
+            className="rounded-lg bg-white/10 px-4 py-2 text-sm hover:bg-white/15 disabled:opacity-50"
+          >
+            {resending
+              ? "Sending…"
+              : countdown > 0
+              ? `Resend link in ${countdown}s`
+              : "Resend link"}
+          </button>
+          <a
+            href="/join?free=1"
+            className="text-sm text-neutral-300 underline underline-offset-4 hover:text-white"
+          >
+            Use a different email
+          </a>
+        </div>
+
+        <p className="mt-4 text-center text-xs text-neutral-500">
+          Tip: check your spam or promotions folder if it hasn’t arrived within a minute.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function WelcomePage() {
   const params = useSearchParams();
   const me = useMe();
@@ -55,45 +125,23 @@ export default function WelcomePage() {
     []
   );
 
-  // UI / form state
+  // Form state
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [saving, setSaving] = useState(false);
   const [savedOnce, setSavedOnce] = useState(false);
   const [error, setError] = useState("");
 
-  // Post-checkout activation state
+  // Activation state
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
   const [pendingInfo, setPendingInfo] = useState<string>("");
 
-  // Resend controls
+  // Resend state
   const [resending, setResending] = useState(false);
-  const [cooldown, setCooldown] = useState(0);
+  const [countdown, setCountdown] = useState(0); // only starts after user clicks resend
+  const canResend = countdown === 0 && !!pendingEmail;
 
-  // ===== Helpers
-  const maskEmail = (e?: string | null) => {
-    if (!e) return "—";
-    const [u, d] = e.split("@");
-    if (!u || !d) return e;
-    const maskedUser = u.length <= 2 ? `${u[0] ?? ""}…` : `${u.slice(0, 2)}…${u.slice(-1)}`;
-    return `${maskedUser}@${d}`;
-  };
-
-  const inboxLinks = (e?: string | null) => {
-    const domain = (e?.split("@")[1] ?? "").toLowerCase();
-    if (domain.includes("gmail")) return [{ href: "https://mail.google.com/", label: "Open Gmail" }];
-    if (domain.includes("outlook") || domain.includes("hotmail") || domain.includes("live"))
-      return [{ href: "https://outlook.live.com/mail/", label: "Open Outlook" }];
-    if (domain.includes("yahoo"))
-      return [{ href: "https://mail.yahoo.com/", label: "Open Yahoo Mail" }];
-    return [
-      { href: "https://mail.google.com/", label: "Gmail" },
-      { href: "https://outlook.live.com/mail/", label: "Outlook" },
-      { href: "https://mail.yahoo.com/", label: "Yahoo" },
-    ];
-  };
-
-  // ===== Prefill profile if signed in
+  // Prefill profile if signed in
   useEffect(() => {
     if (!user?.id) return;
     let aborted = false;
@@ -113,7 +161,7 @@ export default function WelcomePage() {
     };
   }, [user?.id, supabase]);
 
-  // ===== Arrived from Stripe → claim email → send OTP
+  // Arrived from Stripe → claim email → send OTP
   useEffect(() => {
     const sessionId = params.get("session_id");
     const pending = params.get("pending") === "1";
@@ -128,16 +176,13 @@ export default function WelcomePage() {
         if (!email) throw new Error("No email returned for session");
 
         setPendingEmail(email);
-        setPendingInfo("We’re sending you a secure sign-in link…");
-
-        const { error: otpErr } = await supabase.auth.signInWithOtp({
+        setPendingInfo("We’ve emailed you a secure sign-in link. Open it to activate your account.");
+        // Do NOT start countdown here. Only start it if user clicks “Resend”.
+        // We already sent the first link above; no need to rate-limit until they try to resend.
+        await supabase.auth.signInWithOtp({
           email,
           options: { emailRedirectTo: new URL("/welcome", APP_URL).toString() },
         });
-        if (otpErr) throw otpErr;
-
-        setPendingInfo("Check your email to activate your account, then return here.");
-        setCooldown(45); // 45s until “Resend” enabled
       } catch (e: any) {
         setPendingInfo(
           e?.message || "We couldn’t start activation automatically. Please check your email."
@@ -147,14 +192,14 @@ export default function WelcomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params, user?.id]);
 
-  // Cooldown timer for “Resend link”
+  // Countdown timer (only runs after a resend)
   useEffect(() => {
-    if (cooldown <= 0) return;
-    const t = setInterval(() => setCooldown((c) => (c > 0 ? c - 1 : 0)), 1000);
+    if (countdown <= 0) return;
+    const t = setInterval(() => setCountdown((c) => (c > 0 ? c - 1 : 0)), 1000);
     return () => clearInterval(t);
-  }, [cooldown]);
+  }, [countdown]);
 
-  // Prevent background scroll & clicks while pending activation
+  // Lock background while overlay is visible
   const showActivationOverlay = !user && (params.get("pending") === "1");
   useEffect(() => {
     if (!showActivationOverlay) return;
@@ -166,7 +211,7 @@ export default function WelcomePage() {
     };
   }, [showActivationOverlay]);
 
-  // ===== Actions
+  // Actions
   const isValidPhone = (v: string) => {
     const s = v.replace(/[\s\-\(\)]/g, "");
     return /^(\+?\d{10,15})$/.test(s);
@@ -210,7 +255,7 @@ export default function WelcomePage() {
   }
 
   const resend = async () => {
-    if (!pendingEmail || cooldown > 0) return;
+    if (!pendingEmail || !canResend) return;
     setResending(true);
     try {
       const { error: otpErr } = await supabase.auth.signInWithOtp({
@@ -218,80 +263,29 @@ export default function WelcomePage() {
         options: { emailRedirectTo: new URL("/welcome", APP_URL).toString() },
       });
       if (otpErr) throw otpErr;
-      setCooldown(45);
-    } catch (e) {
+      // Start 45s cooldown AFTER a resend is requested
+      setCountdown(45);
+    } catch {
       // soft fail – keep overlay up
     } finally {
       setResending(false);
     }
   };
 
-  // ===== Render
   return (
     <>
-      {/* Full-screen activation overlay (blocks all interaction until confirmed) */}
+      {/* Activation overlay – blocks interaction until email is confirmed */}
       {showActivationOverlay && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
-          <div className="mx-4 w-full max-w-lg rounded-2xl border border-amber-400/30 bg-neutral-950 p-6 text-neutral-100 shadow-2xl">
-            {/* tiny inbox glyph (SVG, no external assets) */}
-            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-amber-400/30 bg-amber-400/10">
-              <svg viewBox="0 0 24 24" className="h-6 w-6" aria-hidden="true">
-                <path
-                  fill="currentColor"
-                  d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7zm2 0v.3l7 4.2 7-4.2V7H5zm14 2.7-7 4.2-7-4.2V17h14V9.7z"
-                />
-              </svg>
-            </div>
-
-            <h1 className="text-center text-xl font-semibold">Check your email to activate</h1>
-            <p className="mt-2 text-center text-neutral-200">
-              We’ve sent a secure sign-in link to{" "}
-              <span className="font-mono">{maskEmail(pendingEmail)}</span>. Click it to confirm your
-              account — then return here to finish setup.
-            </p>
-
-            {pendingInfo && (
-              <p className="mt-2 text-center text-neutral-400 text-sm">{pendingInfo}</p>
-            )}
-
-            <div className="mt-4 grid gap-2 sm:grid-cols-3">
-              {inboxLinks(pendingEmail).map((l) => (
-                <a
-                  key={l.href}
-                  href={l.href}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-center rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800"
-                >
-                  {l.label}
-                </a>
-              ))}
-            </div>
-
-            <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
-              <button
-                onClick={resend}
-                disabled={!pendingEmail || resending || cooldown > 0}
-                className="rounded-lg bg-white/10 px-4 py-2 text-sm hover:bg-white/15 disabled:opacity-50"
-              >
-                {resending ? "Sending…" : cooldown > 0 ? `Resend link in ${cooldown}s` : "Resend link"}
-              </button>
-              <a
-                href="/join?free=1"
-                className="text-sm text-neutral-300 underline underline-offset-4 hover:text-white"
-              >
-                Use a different email
-              </a>
-            </div>
-
-            <p className="mt-4 text-center text-xs text-neutral-500">
-              Tip: check your spam or promotions folder if it hasn’t arrived within a minute.
-            </p>
-          </div>
-        </div>
+        <ActivateOverlay
+          email={pendingEmail}
+          info={pendingInfo}
+          onResend={resend}
+          canResend={canResend}
+          countdown={countdown}
+          resending={resending}
+        />
       )}
 
-      {/* The normal page remains, but it’s covered/blocked by the overlay above until confirmed */}
       <Container>
         <PageHeader
           title="Welcome to TradeCard"
@@ -305,7 +299,7 @@ export default function WelcomePage() {
           }
         />
 
-        {/* Card + next steps */}
+        {/* Card + Next steps */}
         <section className="rounded-2xl border border-neutral-800 bg-gradient-to-br from-neutral-900 to-neutral-950 p-5">
           <div className="text-sm text-neutral-400">Your digital card</div>
 
@@ -329,9 +323,9 @@ export default function WelcomePage() {
 
                 <div className="rounded-lg border border-neutral-800 p-3 text-center">
                   <button
+                    onClick={() => user?.id && navigator.clipboard.writeText(user.id)}
                     className="rounded bg-neutral-800 px-3 py-1 text-sm hover:bg-neutral-700 disabled:opacity-50"
                     disabled={!user?.id}
-                    onClick={() => user?.id && navigator.clipboard.writeText(user.id)}
                   >
                     Copy ID
                   </button>
