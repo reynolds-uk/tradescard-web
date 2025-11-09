@@ -19,13 +19,11 @@ type Cycle = "month" | "year";
 const APP_URL =
   process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
 
-// --- Stripe price display (do not hard-wire IDs here) ------------------------
+// Display-only prices (do not hard-wire Stripe IDs here)
 const PRICE = {
   member: { month: "£2.99/mo", year: "£29.00/yr" },
   pro: { month: "£7.99/mo", year: "£79.00/yr" },
 } as const;
-
-// ---------------------------------------------------------------------------
 
 const AUTH_ERROR_MAP: Record<string, string> = {
   otp_expired: "That sign-in link has expired. Please request a new one.",
@@ -38,38 +36,37 @@ export default function JoinPage() {
   const router = useRouter();
   const params = useSearchParams();
 
-  // Auth context
   const me = useMe();
   const showTrial = shouldShowTrial(me);
 
-  // Paid checkout helper
+  // Checkout helper
   const { busy, error: checkoutError, startMembership } = useJoinActions("/join");
 
-  // Tabs
+  // UI state
   const [tab, setTab] = useState<"join" | "signin">("join");
   const [cycle, setCycle] = useState<Cycle>("month");
 
-  // Which paid card should show the inline email form (if logged out)
+  // Which paid card shows inline email (only one at a time)
   const [activeInline, setActiveInline] = useState<null | "member" | "pro">(null);
 
-  // Email state — kept separate so the free box doesn’t fight the paid one
+  // Email states (separate so they don’t fight each other)
   const [emailPaid, setEmailPaid] = useState("");
   const [emailFree, setEmailFree] = useState("");
 
-  // Free block “expanded” state (so we don’t render two email boxes open by default)
+  // Free path collapsed until clicked
   const [freeOpen, setFreeOpen] = useState(false);
 
-  // UX state
+  // Feedback
   const [info, setInfo] = useState("");
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
 
-  // Refs (focus only — no repeated focus-on-every-render nonsense)
+  // Refs + “only run once” guard for initial focus
   const paidInputRef = useRef<HTMLInputElement>(null);
   const freeInputRef = useRef<HTMLInputElement>(null);
-  const mountedOnce = useRef(false);
+  const initialised = useRef(false);
 
-  // Supabase client (client-side OTP auth)
+  // Supabase client
   const supabase = useMemo(
     () =>
       createClient(
@@ -79,10 +76,10 @@ export default function JoinPage() {
     []
   );
 
-  // One-time initialisation from URL
+  // One-time init from URL
   useEffect(() => {
-    if (mountedOnce.current) return;
-    mountedOnce.current = true;
+    if (initialised.current) return;
+    initialised.current = true;
 
     const mode = (params.get("mode") || "").toLowerCase();
     const qPlan = (params.get("plan") || "").toLowerCase() as "" | "member" | "pro";
@@ -91,20 +88,18 @@ export default function JoinPage() {
     if (mode === "signin") setTab("signin");
     if (qCycle === "year") setCycle("year");
 
-    // If they arrived with a paid intent and are logged out, open that inline form once.
+    // If they arrive with a paid intent (logged out), open that inline once
     if (!me.user && (qPlan === "member" || qPlan === "pro")) {
       setActiveInline(qPlan);
-      // Focus only once (microtask to wait for render)
       queueMicrotask(() => paidInputRef.current?.focus());
     }
 
-    // Handle any auth error codes in query string once
+    // Auth errors in callback URL (e.g. used link twice)
     const err = params.get("error") || params.get("error_code");
     if (err) {
       const key = err.toLowerCase();
       setTab("signin");
       setInfo(AUTH_ERROR_MAP[key] || "We couldn’t verify your link. Please request a new one.");
-      // Clean the URL (best-efforts)
       try {
         const url = new URL(window.location.href);
         ["error", "error_code", "error_description", "status", "success", "canceled"].forEach(
@@ -116,40 +111,34 @@ export default function JoinPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // If already signed in, /join isn’t needed — either continue checkout or go to /offers
+  // If already signed in, either continue a pending checkout or go to /offers
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getSession();
       if (data?.session?.user) {
-        // If we opened inline for a paid plan and they sign in, continue checkout
         if (activeInline) {
-          await startMembership(activeInline, { cycle, trial: showTrial });
+          await startMembership(activeInline, cycle); // <-- FIXED: pass only the interval
           return;
         }
         router.replace("/offers");
       }
     })();
-    // We purposely do not depend on `emailPaid`/`emailFree` here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeInline]);
-
-  // ---------------------------------------------------------------------------
 
   const isValidEmail = (v: string) => /^\S+@\S+\.\S+$/.test(v.trim());
 
   async function sendMagicLink(targetEmail: string, redirectTo = "/offers") {
     const trimmed = targetEmail.trim();
-    if (!trimmed || !isValidEmail(trimmed)) {
-      throw new Error("invalid_email");
-    }
-    const { error: supaErr } = await supabase.auth.signInWithOtp({
+    if (!trimmed || !isValidEmail(trimmed)) throw new Error("invalid_email");
+    const { error } = await supabase.auth.signInWithOtp({
       email: trimmed,
       options: { emailRedirectTo: new URL(redirectTo, APP_URL).toString() },
     });
-    if (supaErr) throw supaErr;
+    if (error) throw error;
   }
 
-  // Free (Access) sign-up
+  // Free (Access)
   async function handleFreeJoin() {
     setInfo("");
     try {
@@ -171,35 +160,28 @@ export default function JoinPage() {
     }
   }
 
-  // Paid plan selection
+  // Choose a paid plan
   async function choose(plan: Exclude<Plan, "access">) {
     setInfo("");
-    // If logged out → open inline email capture on that card
     if (!me.user) {
       setActiveInline(plan);
-      // Focus without toggling anything else
       queueMicrotask(() => paidInputRef.current?.focus());
       return;
     }
-    // Logged in → go straight to checkout
-    track(plan === "member" ? "join_member_click" : "join_pro_click", {
-      trial: showTrial,
-      cycle,
-    });
-    await startMembership(plan, { cycle, trial: showTrial });
+    track(plan === "member" ? "join_member_click" : "join_pro_click", { cycle, trial: showTrial });
+    await startMembership(plan, cycle); // <-- FIXED
   }
 
-  // Send link for paid inline (then continue to chosen plan after sign-in)
+  // Send link for paid inline, then continue checkout post-sign-in
   async function handlePaidLink() {
     if (!activeInline) return;
     setInfo("");
     try {
       setSending(true);
-      // Return to /join so this page can resume checkout with the selected plan
       await sendMagicLink(emailPaid, "/join");
       setSent(true);
       setInfo(`Link sent. After you sign in, we’ll continue to ${activeInline} (${cycle}).`);
-      track("join_free_click"); // we still use the free event for “send link” actions
+      track("join_free_click");
     } catch (e) {
       setSent(false);
       setInfo(
@@ -221,7 +203,6 @@ export default function JoinPage() {
       }
     };
 
-  // Simple pill buttons for cycles
   function CycleTabs() {
     return (
       <div className="mb-4 inline-flex rounded-xl border border-neutral-800 p-1">
@@ -254,16 +235,14 @@ export default function JoinPage() {
   }) {
     const isInline = activeInline === plan;
     const price = PRICE[plan][cycle];
-
     const accentCls =
       accent === "pro"
         ? "border-amber-400/30 ring-1 ring-amber-400/20"
         : "border-neutral-800";
 
-    // CTA label logic (promo only on Member monthly)
     const ctaLabel =
       plan === "member" && cycle === "month" && showTrial
-        ? TRIAL_COPY
+        ? TRIAL_COPY // e.g. "Try Member for £1 for 90 days"
         : plan === "member"
         ? `Choose Member – ${price}`
         : `Choose Pro – ${price}`;
@@ -322,21 +301,29 @@ export default function JoinPage() {
             ? "Pick a plan for protection, early deals and monthly rewards — or start free and upgrade any time."
             : "Sign in with a magic link. No password needed."
         }
-        aside={tab === "join" && showTrial ? <span className="promo-chip promo-chip-xs-hide">{TRIAL_COPY}</span> : undefined}
+        aside={
+          tab === "join" && showTrial ? (
+            <span className="promo-chip promo-chip-xs-hide">{TRIAL_COPY}</span>
+          ) : undefined
+        }
       />
 
-      {/* Top tabs */}
+      {/* Tab switcher */}
       <div className="mb-3 inline-flex rounded-xl border border-neutral-800 p-1">
         <button
           onClick={() => setTab("join")}
-          className={`px-3 py-1.5 text-sm rounded-lg ${tab === "join" ? "bg-neutral-800" : "hover:bg-neutral-900"}`}
+          className={`px-3 py-1.5 text-sm rounded-lg ${
+            tab === "join" ? "bg-neutral-800" : "hover:bg-neutral-900"
+          }`}
           aria-pressed={tab === "join"}
         >
           Join
         </button>
         <button
           onClick={() => setTab("signin")}
-          className={`px-3 py-1.5 text-sm rounded-lg ${tab === "signin" ? "bg-neutral-800" : "hover:bg-neutral-900"}`}
+          className={`px-3 py-1.5 text-sm rounded-lg ${
+            tab === "signin" ? "bg-neutral-800" : "hover:bg-neutral-900"
+          }`}
           aria-pressed={tab === "signin"}
         >
           Sign in
@@ -357,7 +344,7 @@ export default function JoinPage() {
         </div>
       )}
 
-      {/* MAIN CONTENT */}
+      {/* Main content */}
       {tab === "join" ? (
         <>
           <div className="grid gap-4 md:grid-cols-2">
@@ -388,7 +375,8 @@ export default function JoinPage() {
           <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="text-sm text-neutral-300">
-                Prefer to start free? Join with Access to browse and redeem offers. Upgrade any time.
+                Prefer to start free? Join with Access to browse and redeem offers. Upgrade any
+                time.
               </div>
 
               {!freeOpen ? (
@@ -430,7 +418,7 @@ export default function JoinPage() {
           </div>
         </>
       ) : (
-        // SIGN IN TAB
+        // Sign-in tab
         <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
           <div className="text-sm text-neutral-300">
             Enter your email and we’ll send you a magic link.
