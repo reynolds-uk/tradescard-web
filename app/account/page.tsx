@@ -347,14 +347,23 @@ export default function AccountPage() {
 
   const showSticky = ready && !loading && view && (canJoin || canUpgrade || canDowngrade);
 
-  // Mask email helper
-  const maskEmail = (e?: string | null) => {
-    if (!e) return "—";
-    const [u, d] = e.split("@");
-    if (!d) return e;
-    const maskedUser = u.length <= 2 ? u[0] + "…" : u.slice(0, 2) + "…" + u.slice(-1);
-    return `${maskedUser}@${d}`;
-  };
+  // Replace the existing maskEmail with this
+const maskEmail = (e?: string | null) => {
+  if (!e) return "—";
+  const parts = e.split("@");
+  if (parts.length < 2) return e;
+
+  const u = parts[0] || "";
+  const d = parts[1] || "";
+
+  // build a simple masked user part
+  const maskedUser =
+    u.length <= 2
+      ? (u.charAt(0) ? u.charAt(0) + "…" : "…")
+      : `${u.slice(0, 2)}…${u.slice(-1)}`;
+
+  return `${maskedUser}@${d}`;
+};
 
   return (
     <>
