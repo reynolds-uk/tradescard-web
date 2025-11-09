@@ -3,13 +3,15 @@ export default function SiteFooter() {
   const year = new Date().getFullYear();
 
   return (
-    <footer className="mt-8 border-t border-neutral-900/60">
+    <footer className="mt-8 border-t border-neutral-900/60 footer-safe">
       {/* Trust strip */}
       <div className="mx-auto grid max-w-5xl gap-2 px-4 py-6 text-center text-[13px] text-neutral-400 sm:grid-cols-3">
         <div className="sm:text-left">
           Secure checkout by <span className="text-neutral-200">Stripe</span>
         </div>
-        <div>Cancel any time in <span className="text-neutral-200">Manage billing</span></div>
+        <div>
+          Cancel any time in <span className="text-neutral-200">Manage billing</span>
+        </div>
         <div className="sm:text-right">
           No spam. We’ll only email about <span className="text-neutral-200">TradeCard</span>.
         </div>

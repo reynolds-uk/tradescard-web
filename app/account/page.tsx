@@ -67,9 +67,10 @@ function Badge({
 }
 
 export default function AccountPage() {
-  const me = useMe();                 // { user?, email?, tier, status, ready? }
-  const ready = useMeReady();       // guard to stop logged-out ➜ in flicker
+  const me = useMe();                 // { user?, email?, tier, status? }
+  const ready = useMeReady();
   const showTrial = shouldShowTrial(me);
+  const isSignedIn = !!me?.user;
 
   // Supabase only for signOut()
   const supabase = useMemo(
@@ -113,7 +114,6 @@ export default function AccountPage() {
       return;
     }
 
-    // Account
     const accRes = await fetch(
       `${API_BASE}/api/account?user_id=${encodeURIComponent(uid)}`,
       { cache: "no-store", signal: abortRef.current.signal }
@@ -122,7 +122,6 @@ export default function AccountPage() {
     const acc: ApiAccount = await accRes.json();
     setView(mapToView(acc, (me?.user as { created_at?: string })?.created_at ?? null));
 
-    // Rewards summary (optional)
     const rw = await fetch(
       `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(uid)}`,
       { cache: "no-store", signal: abortRef.current.signal }
@@ -139,23 +138,19 @@ export default function AccountPage() {
   }
 
   useEffect(() => {
-    if (!ready) return; // wait until auth state is known
+    if (!ready) return;
 
     (async () => {
       try {
         setLoading(true);
-
-        // Clean noisy params (Stripe/auth)
+        // Clean noisy params (Stripe / auth redirects)
         try {
           const url = new URL(window.location.href);
-          const keys = ["status", "success", "canceled", "auth_error", "error", "error_code"];
-          if (keys.some((k) => url.searchParams.has(k))) {
-            window.history.replaceState({}, "", url.pathname + url.hash);
-          }
-        } catch {
-          /* no-op */
-        }
-
+          ["status", "success", "canceled", "auth_error", "error", "error_code"].forEach((k) =>
+            url.searchParams.delete(k)
+          );
+          window.history.replaceState({}, "", url.pathname + url.hash);
+        } catch {}
         await fetchEverything();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Something went wrong");
@@ -184,7 +179,6 @@ export default function AccountPage() {
       setBusy(true);
       setError("");
       if (!me?.user) {
-        // Not signed in: route to /join with intent
         routeToJoin(plan);
         return;
       }
@@ -195,7 +189,6 @@ export default function AccountPage() {
           user_id: me.user.id,
           email: me.email,
           plan,
-          // hint to API: pick intro price if configured/eligible
           trial: showTrial,
           next: "/welcome",
         }),
@@ -216,7 +209,7 @@ export default function AccountPage() {
       setBusy(true);
       setError("");
       if (!me?.user) {
-        routeToJoin(); // ask user to sign in
+        routeToJoin();
         return;
       }
       const res = await fetch(`${API_BASE}/api/stripe/portal`, {
@@ -263,7 +256,7 @@ export default function AccountPage() {
   };
 
   const prettyDate = (iso?: string | null) =>
-    iso ? new Date(iso).toLocaleDateString() : "—";
+    iso ? new Date(iso).toLocaleDateString("en-GB", { year: "numeric", month: "short", day: "2-digit" }) : "—";
 
   const canJoin =
     !view || view.tier === "access" || view.status === "canceled" || view.status === "free";
@@ -276,247 +269,283 @@ export default function AccountPage() {
   const proCta = "Go Pro (£7.99/mo)";
   const upgradeToProCta = "Upgrade to Pro";
 
+  // Mobile sticky CTA if actionable
+  const stickyLabel =
+    canJoin ? (showTrial ? TRIAL_COPY : "Become a Member") :
+    canUpgrade ? upgradeToProCta :
+    canDowngrade ? "Manage billing" : "";
+
+  const stickyAction = () => {
+    if (canJoin) return startMembership("member");
+    if (canUpgrade) return startMembership("pro");
+    if (canDowngrade) return openBillingPortal();
+  };
+
+  const showSticky = ready && !loading && view && (canJoin || canUpgrade || canDowngrade);
+
   return (
-    <Container>
-      <PageHeader
-        title="My Account"
-        subtitle="Manage your membership, card, billing and rewards eligibility."
-        aside={
-          ready ? (
-            <button
-              onClick={refresh}
-              className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800 disabled:opacity-60"
-              disabled={loading}
-            >
-              {loading ? "Refreshing…" : "Refresh"}
-            </button>
-          ) : null
-        }
-      />
-
-      {/* Initial skeleton to prevent flicker */}
-      {!ready && (
-        <div className="rounded-xl border border-neutral-800 p-5 bg-neutral-900/60 animate-pulse h-40" />
-      )}
-
-      {error && ready && (
-        <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300">
-          {error}
-        </div>
-      )}
-
-      {/* Logged out */}
-      {ready && !loading && !view && (
-        <div className="rounded-xl border border-neutral-800 p-5 bg-neutral-900/60">
-          <p className="font-medium mb-2">You’re not signed in.</p>
-          <p className="text-neutral-400 mb-3">
-            Use your email to get a magic sign-in link. No password needed.
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => routeToJoin()}
-              className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
-            >
-              Join free
-            </button>
-            <PrimaryButton onClick={() => routeToJoin("member")}>
-              {showTrial ? TRIAL_COPY : "Become a Member"}
+    <>
+      {/* Sticky actions (mobile) */}
+      {showSticky && (
+        <div
+          className="fixed inset-x-0 bottom-0 z-40 md:hidden border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70"
+          role="region"
+          aria-label="Account quick action"
+        >
+          <div className="safe-inset-bottom" />
+          <div className="mx-auto max-w-5xl px-4 py-3">
+            <PrimaryButton onClick={stickyAction} disabled={busy} className="w-full text-base py-3">
+              {busy ? "Opening…" : stickyLabel}
             </PrimaryButton>
+            <div className="mt-2 text-center text-[11px] text-neutral-400">
+              {canJoin && "Billed monthly • Cancel any time"}
+              {canUpgrade && "Pro unlocks bigger boosts & Pro-only offers"}
+              {canDowngrade && "Manage plan, payment method or cancel"}
+            </div>
           </div>
         </div>
       )}
 
-      {/* Logged in */}
-      {ready && !loading && view && (
-        <div className="space-y-6">
-          {/* Status cues */}
-          {view.status === "past_due" && (
-            <div className="rounded-lg border border-red-700/40 bg-red-900/10 p-3 text-sm text-red-300">
-              Payment issue detected. Update your billing details to keep benefits active.
-              <button onClick={openBillingPortal} className="ml-3 underline underline-offset-4">
-                Manage billing
+      <Container className={showSticky ? "safe-bottom-pad" : ""}>
+        <PageHeader
+          title="My Account"
+          subtitle="Manage your membership, card, billing and rewards eligibility."
+          aside={
+            ready ? (
+              <button
+                onClick={refresh}
+                className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800 disabled:opacity-60"
+                disabled={loading}
+              >
+                {loading ? "Refreshing…" : "Refresh"}
               </button>
-            </div>
-          )}
-          {view.status === "trialing" && (
-            <div className="rounded-lg border border-amber-600/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-              You’re on a trial. Upgrade, switch, or cancel any time from billing.
-              <button onClick={openBillingPortal} className="ml-3 underline underline-offset-4">
-                Open billing portal
+            ) : null
+          }
+        />
+
+        {/* Initial skeleton to prevent flicker */}
+        {!ready && (
+          <div className="rounded-xl border border-neutral-800 p-5 bg-neutral-900/60 animate-pulse h-40" />
+        )}
+
+        {error && ready && (
+          <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300">
+            {error}
+          </div>
+        )}
+
+        {/* Logged out */}
+        {ready && !loading && !isSignedIn && (
+          <div className="rounded-xl border border-neutral-800 p-5 bg-neutral-900/60">
+            <p className="font-medium mb-2">You’re not signed in.</p>
+            <p className="text-neutral-400 mb-3">
+              Use your email to get a magic sign-in link. No password needed.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => routeToJoin()}
+                className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
+              >
+                Join free
               </button>
+              <PrimaryButton onClick={() => routeToJoin("member")}>
+                {showTrial ? TRIAL_COPY : "Become a Member"}
+              </PrimaryButton>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Virtual card */}
-          <section className="rounded-2xl border border-neutral-800 p-5 bg-gradient-to-br from-neutral-900 to-neutral-950">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-sm text-neutral-400">My TradesCard</div>
-                <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <div className="text-2xl font-semibold">TradesCard</div>
-                  <Badge tone="muted">{TIER_COPY[view.tier].label}</Badge>
-                  {statusBadge(view.status)}
+        {/* Logged in */}
+        {ready && !loading && view && (
+          <div className="space-y-6">
+            {/* Status cues */}
+            {view.status === "past_due" && (
+              <div className="rounded-lg border border-red-700/40 bg-red-900/10 p-3 text-sm text-red-300">
+                Payment issue detected. Update your billing details to keep benefits active.
+                <button onClick={openBillingPortal} className="ml-3 underline underline-offset-4">
+                  Manage billing
+                </button>
+              </div>
+            )}
+            {view.status === "trialing" && (
+              <div className="rounded-lg border border-amber-600/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+                You’re on a trial. Upgrade, switch, or cancel any time from billing.
+                <button onClick={openBillingPortal} className="ml-3 underline underline-offset-4">
+                  Open billing portal
+                </button>
+              </div>
+            )}
+
+            {/* Summary card */}
+            <section className="rounded-2xl border border-neutral-800 p-5 bg-gradient-to-br from-neutral-900 to-neutral-950">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm text-neutral-400">Membership</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <div className="text-2xl font-semibold">TradeCard</div>
+                    <Badge tone="muted">{TIER_COPY[view.tier].label}</Badge>
+                    {statusBadge(view.status)}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-dashed border-neutral-700 px-3 py-2 text-xs text-neutral-400">
+                  Wallet pass coming soon
                 </div>
               </div>
-              <div className="rounded-lg border border-dashed border-neutral-700 px-3 py-2 text-xs text-neutral-400">
-                QR / Wallet coming soon
-              </div>
-            </div>
 
-            <div className="mt-4 grid gap-2 sm:grid-cols-2">
-              <div className="truncate">
-                <span className="opacity-60">Name:</span> {view.name || "—"}
-              </div>
-              <div className="truncate">
-                <span className="opacity-60">Email:</span> {view.email}
-              </div>
-              <div className="truncate">
-                <span className="opacity-60">Member ID:</span> {view.user_id}
-                <button
-                  className="ml-2 rounded bg-neutral-800 px-2 py-0.5 text-xs hover:bg-neutral-700"
-                  onClick={() => navigator.clipboard.writeText(view.user_id)}
-                >
-                  Copy ID
-                </button>
-              </div>
-              <div className="truncate">
-                <span className="opacity-60">Joined:</span> {prettyDate(view.joined_at)}
-              </div>
-            </div>
-
-            <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-              <div className="rounded-lg border border-neutral-800 p-3">
-                <div className="text-2xl font-semibold">{TIER_COPY[view.tier].boost}</div>
-                <div className="text-xs text-neutral-400 mt-1">Tier boost</div>
-              </div>
-              <div className="rounded-lg border border-neutral-800 p-3">
-                <div className="text-2xl font-semibold">{TIER_COPY[view.tier].priceShort}</div>
-                <div className="text-xs text-neutral-400 mt-1">per month</div>
-              </div>
-              <div className="rounded-lg border border-neutral-800 p-3">
-                <div className="text-2xl font-semibold">{prettyDate(view.renewal_date)}</div>
-                <div className="text-xs text-neutral-400 mt-1">Renews</div>
-              </div>
-            </div>
-          </section>
-
-          {/* Rewards eligibility */}
-          <section className="rounded-xl border border-neutral-800 p-5">
-            <div className="flex items-center justify-between">
-              <div className="font-medium">Rewards eligibility</div>
-              <div className="text-xs text-neutral-400">
-                {isActive ? "Eligible while membership is active" : "Not eligible"}
-              </div>
-            </div>
-            <div className="mt-3 grid gap-3 md:grid-cols-3">
-              <div className="rounded-lg border border-neutral-800 p-3">
-                <div className="text-sm text-neutral-400">Points this month</div>
-                <div className="mt-1 text-2xl font-semibold">
-                  {rewards ? rewards.points_this_month : "—"}
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <div className="truncate">
+                  <span className="opacity-60">Name:</span> {view.name || "—"}
+                </div>
+                <div className="truncate">
+                  <span className="opacity-60">Email:</span> {view.email}
+                </div>
+                <div className="truncate">
+                  <span className="opacity-60">Member ID:</span> {view.user_id}
+                  <button
+                    className="ml-2 rounded bg-neutral-800 px-2 py-0.5 text-xs hover:bg-neutral-700"
+                    onClick={() => navigator.clipboard.writeText(view.user_id)}
+                  >
+                    Copy ID
+                  </button>
+                </div>
+                <div className="truncate">
+                  <span className="opacity-60">Joined:</span> {prettyDate(view.joined_at)}
                 </div>
               </div>
-              <div className="rounded-lg border border-neutral-800 p-3">
-                <div className="text-sm text-neutral-400">Lifetime points</div>
-                <div className="mt-1 text-2xl font-semibold">
-                  {rewards ? rewards.lifetime_points : "—"}
+
+              <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-lg border border-neutral-800 p-3">
+                  <div className="text-2xl font-semibold">{TIER_COPY[view.tier].boost}</div>
+                  <div className="text-xs text-neutral-400 mt-1">Tier boost</div>
+                </div>
+                <div className="rounded-lg border border-neutral-800 p-3">
+                  <div className="text-2xl font-semibold">{TIER_COPY[view.tier].priceShort}</div>
+                  <div className="text-xs text-neutral-400 mt-1">per month</div>
+                </div>
+                <div className="rounded-lg border border-neutral-800 p-3">
+                  <div className="text-2xl font-semibold">{prettyDate(view.renewal_date)}</div>
+                  <div className="text-xs text-neutral-400 mt-1">Renews</div>
                 </div>
               </div>
-              <div className="rounded-lg border border-neutral-800 p-3">
-                <div className="text-sm text-neutral-400">Status</div>
-                <div className="mt-1">{statusBadge(view.status)}</div>
+            </section>
+
+            {/* Rewards eligibility */}
+            <section className="rounded-xl border border-neutral-800 p-5">
+              <div className="flex items-center justify-between">
+                <div className="font-medium">Rewards eligibility</div>
+                <div className="text-xs text-neutral-400">
+                  {isActive ? "Eligible while membership is active" : "Not eligible"}
+                </div>
               </div>
-            </div>
-            <p className="mt-3 text-sm text-neutral-400">
-              Cancelling or downgrading stops new entries immediately. Lifetime points remain
-              on your profile but do not qualify you for draws while inactive.
-            </p>
-          </section>
-
-          {/* Plan actions */}
-          <section
-            ref={actionsRef}
-            className={`rounded-xl border border-neutral-800 p-5 ${pulseActions ? "animate-pulse" : ""}`}
-          >
-            <div className="font-medium mb-3">Plan actions</div>
-
-            {canJoin && (
-              <div className="flex flex-wrap gap-2">
-                <PrimaryButton onClick={() => startMembership("member")} disabled={busy}>
-                  {busy ? "Opening…" : memberCta}
-                </PrimaryButton>
-                <button
-                  onClick={() => startMembership("pro")}
-                  disabled={busy}
-                  className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
-                >
-                  {busy ? "Opening…" : proCta}
-                </button>
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <div className="rounded-lg border border-neutral-800 p-3">
+                  <div className="text-sm text-neutral-400">Points this month</div>
+                  <div className="mt-1 text-2xl font-semibold">
+                    {rewards ? rewards.points_this_month : "—"}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-neutral-800 p-3">
+                  <div className="text-sm text-neutral-400">Lifetime points</div>
+                  <div className="mt-1 text-2xl font-semibold">
+                    {rewards ? rewards.lifetime_points : "—"}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-neutral-800 p-3">
+                  <div className="text-sm text-neutral-400">Status</div>
+                  <div className="mt-1">{statusBadge(view.status)}</div>
+                </div>
               </div>
-            )}
+              <p className="mt-3 text-sm text-neutral-400">
+                Cancelling or downgrading stops new entries immediately. Lifetime points remain
+                on your profile but do not qualify you for draws while inactive.
+              </p>
+            </section>
 
-            {canUpgrade && (
-              <div className="flex flex-wrap gap-2">
-                <PrimaryButton onClick={() => startMembership("pro")} disabled={busy}>
-                  {busy ? "Opening…" : upgradeToProCta}
-                </PrimaryButton>
-                <button
-                  onClick={openBillingPortal}
-                  disabled={busy}
-                  className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
-                >
-                  {busy ? "Opening…" : "Manage billing / Cancel"}
-                </button>
-              </div>
-            )}
-
-            {canDowngrade && (
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={() => startMembership("member")}
-                  disabled={busy}
-                  className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
-                >
-                  {busy ? "Opening…" : "Switch to Member"}
-                </button>
-                <button
-                  onClick={openBillingPortal}
-                  disabled={busy}
-                  className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
-                >
-                  {busy ? "Opening…" : "Manage billing / Cancel"}
-                </button>
-              </div>
-            )}
-
-            {/* Always show a way to cancel for transparency */}
-            {!canJoin && !canUpgrade && !canDowngrade && (
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={openBillingPortal}
-                  disabled={busy}
-                  className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
-                >
-                  {busy ? "Opening…" : "Manage billing / Cancel"}
-                </button>
-              </div>
-            )}
-
-            <p className="mt-3 text-xs text-neutral-500">
-              You can cancel any time. Cancelling stops reward entries immediately.
-            </p>
-          </section>
-
-          {/* Sign out */}
-          <div className="flex justify-end">
-            <button
-              onClick={signOut}
-              className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
+            {/* Plan actions */}
+            <section
+              ref={actionsRef}
+              className={`rounded-xl border border-neutral-800 p-5 ${pulseActions ? "animate-pulse" : ""}`}
             >
-              Sign out
-            </button>
+              <div className="font-medium mb-3">Plan actions</div>
+
+              {canJoin && (
+                <div className="flex flex-wrap gap-2">
+                  <PrimaryButton onClick={() => startMembership("member")} disabled={busy}>
+                    {busy ? "Opening…" : memberCta}
+                  </PrimaryButton>
+                  <button
+                    onClick={() => startMembership("pro")}
+                    disabled={busy}
+                    className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
+                  >
+                    {busy ? "Opening…" : proCta}
+                  </button>
+                </div>
+              )}
+
+              {canUpgrade && (
+                <div className="flex flex-wrap gap-2">
+                  <PrimaryButton onClick={() => startMembership("pro")} disabled={busy}>
+                    {busy ? "Opening…" : upgradeToProCta}
+                  </PrimaryButton>
+                  <button
+                    onClick={openBillingPortal}
+                    disabled={busy}
+                    className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
+                  >
+                    {busy ? "Opening…" : "Manage billing / Cancel"}
+                  </button>
+                </div>
+              )}
+
+              {canDowngrade && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => startMembership("member")}
+                    disabled={busy}
+                    className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
+                  >
+                    {busy ? "Opening…" : "Switch to Member"}
+                  </button>
+                  <button
+                    onClick={openBillingPortal}
+                    disabled={busy}
+                    className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
+                  >
+                    {busy ? "Opening…" : "Manage billing / Cancel"}
+                  </button>
+                </div>
+              )}
+
+              {!canJoin && !canUpgrade && !canDowngrade && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={openBillingPortal}
+                    disabled={busy}
+                    className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
+                  >
+                    {busy ? "Opening…" : "Manage billing / Cancel"}
+                  </button>
+                </div>
+              )}
+
+              <p className="mt-3 text-xs text-neutral-500">
+                You can cancel any time. Cancelling stops reward entries immediately.
+              </p>
+            </section>
+
+            {/* Sign out */}
+            <div className="flex justify-end">
+              <button
+                onClick={signOut}
+                className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
+              >
+                Sign out
+              </button>
+            </div>
           </div>
-        </div>
-      )}
-    </Container>
+        )}
+      </Container>
+    </>
   );
 }

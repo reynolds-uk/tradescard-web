@@ -28,6 +28,9 @@
   --ok:        #22c55e;   /* emerald-500-ish */
   --warn:      #f59e0b;   /* amber-500-ish */
   --bad:       #ef4444;   /* red-500-ish */
+
+  /* sticky CTA height (keep in sync with UI) */
+  --sticky-h: 76px;
 }
 
 :root { color-scheme: dark; }
@@ -57,10 +60,7 @@ body { @apply bg-neutral-950 text-neutral-100 antialiased; }
 }
 
 /* Primary brand CTA */
-.btn-brand {
-  color: var(--brand-ink);
-  background: var(--brand);
-}
+.btn-brand { color: var(--brand-ink); background: var(--brand); }
 .btn-brand:hover { opacity: .92; }
 
 /* Neutral / secondary */
@@ -74,14 +74,10 @@ body { @apply bg-neutral-950 text-neutral-100 antialiased; }
 }
 
 /* Ghost */
-.btn-ghost {
-  @apply bg-transparent text-neutral-300 hover:text-white;
-}
+.btn-ghost { @apply bg-transparent text-neutral-300 hover:text-white; }
 
 /* Link-like CTA */
-.btn-link {
-  @apply underline underline-offset-4 hover:opacity-90 text-sm;
-}
+.btn-link { @apply underline underline-offset-4 hover:opacity-90 text-sm; }
 
 /* =========================
    Inputs / Forms
@@ -97,50 +93,32 @@ body { @apply bg-neutral-950 text-neutral-100 antialiased; }
    ========================= */
 .badge {
   @apply inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] leading-none;
-  background: #1b1f2a;
-  color: #cbd5e1;
+  background: #1b1f2a; color: #cbd5e1;
 }
 .badge-ok   { background: color-mix(in oklab, var(--ok) 15%, transparent);   color: #a7f3d0; }
 .badge-warn { background: color-mix(in oklab, var(--warn) 18%, transparent); color: #fde68a; }
 .badge-bad  { background: color-mix(in oklab, var(--bad)  18%, transparent); color: #fecaca; }
-.badge-brand{
-  background: color-mix(in oklab, var(--brand) 18%, transparent); color: #ffd7c2;
-}
+.badge-brand{ background: color-mix(in oklab, var(--brand) 18%, transparent); color: #ffd7c2; }
 
-/* Small, subtle promo chip (use this for the £1 trial so it’s not shouting) */
+/* Small, subtle promo chip (for £1 trial) */
 .promo-chip {
   @apply rounded px-2 py-0.5 text-[11px] leading-none border;
   background: color-mix(in oklab, var(--warn) 16%, transparent);
   border-color: color-mix(in oklab, var(--warn) 28%, transparent);
   color: #f8e1b0;
 }
-/* Hide on xs to reduce duplication noise (shows ≥sm) */
 .promo-chip-xs-hide { @apply hidden sm:inline; }
 
-/* Old “chip” helper retained */
+/* Legacy chip */
 .chip { background: var(--chip); @apply inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs text-neutral-300; }
 
 /* =========================
    Alerts
    ========================= */
-.alert {
-  @apply rounded border px-3 py-2 text-sm;
-}
-.alert-info {
-  border-color: color-mix(in oklab, var(--warn) 28%, transparent);
-  background:   color-mix(in oklab, var(--warn) 12%, transparent);
-  color: #f8e1b0;
-}
-.alert-success {
-  border-color: color-mix(in oklab, var(--ok) 30%, transparent);
-  background:   color-mix(in oklab, var(--ok) 12%, transparent);
-  color: #a7f3d0;
-}
-.alert-error {
-  border-color: color-mix(in oklab, var(--bad) 35%, transparent);
-  background:   color-mix(in oklab, var(--bad) 12%, transparent);
-  color: #fecaca;
-}
+.alert { @apply rounded border px-3 py-2 text-sm; }
+.alert-info    { border-color: color-mix(in oklab, var(--warn) 28%, transparent); background: color-mix(in oklab, var(--warn) 12%, transparent); color: #f8e1b0; }
+.alert-success { border-color: color-mix(in oklab, var(--ok) 30%, transparent);   background: color-mix(in oklab, var(--ok) 12%, transparent);   color: #a7f3d0; }
+.alert-error   { border-color: color-mix(in oklab, var(--bad) 35%, transparent);  background: color-mix(in oklab, var(--bad) 12%, transparent);  color: #fecaca; }
 
 /* =========================
    Skeleton
@@ -167,20 +145,27 @@ body { @apply bg-neutral-950 text-neutral-100 antialiased; }
 .bg-panel { background-color: var(--panel); }
 
 /* =========================
-   Mobile / iOS safe-area helpers
+   Mobile / sticky CTA helpers
    ========================= */
 
-/* Reserve space for any fixed bottom bar (e.g. join CTA) */
+/* Add safe-area padding inside fixed bars */
+.safe-inset-bottom { padding-bottom: env(safe-area-inset-bottom); }
+
+/* Reserve space so content isn’t hidden behind the sticky CTA */
 .safe-bottom-pad {
-  padding-bottom: max(5rem, env(safe-area-inset-bottom));
+  padding-bottom: calc(var(--sticky-h) + env(safe-area-inset-bottom));
 }
 
-/* Inside the fixed bar, add padding for iOS Home indicator */
-.safe-inset-bottom {
-  padding-bottom: env(safe-area-inset-bottom);
+/* Make the footer scroll fully above the sticky CTA */
+.footer-safe {
+  padding-bottom: calc(var(--sticky-h) + env(safe-area-inset-bottom));
 }
 
-/* If you use in-page anchors or scroll-to, avoid being covered by the bar */
-html, body {
-  scroll-padding-bottom: 6rem;
+/* Comfortable anchor offset when using in-page links */
+html, body { scroll-padding-bottom: calc(var(--sticky-h) + 1rem); }
+
+/* No extra padding on desktop (no sticky CTA shown) */
+@media (min-width: 768px) {
+  .safe-bottom-pad,
+  .footer-safe { padding-bottom: 0; }
 }
