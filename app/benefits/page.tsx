@@ -10,6 +10,7 @@ import { useMe } from "@/lib/useMe";
 import { useMeReady } from "@/lib/useMeReady";
 import { routeToJoin } from "@/lib/routeToJoin";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
+import TierGate from "@/components/TierGate";
 
 type Tier = "access" | "member" | "pro";
 
