@@ -16,7 +16,8 @@ type Plan = "access" | "member" | "pro";
 type PaidPlan = Exclude<Plan, "access">;
 type Cycle = "month" | "year";
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
+const APP_URL =
+  process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE ??
   "https://tradescard-api.vercel.app").replace(/\/$/, "");
 
@@ -71,7 +72,7 @@ export default function JoinPage() {
 
   // UX flags
   const [info, setInfo] = useState("");
-  the const [sent, setSent] = useState(false);
+  const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
   const [busy, setBusy] = useState(false);
   const [checkoutError, setCheckoutError] = useState("");
@@ -220,13 +221,13 @@ export default function JoinPage() {
       setBusy(true);
       setCheckoutError("");
 
-      // POST to API → /api/checkout  (include `cycle`)
+      // POST to API → /api/checkout (now includes cycle)
       const res = await fetch(`${API_BASE}/api/checkout`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          plan,                        // "member" | "pro"
-          cycle,                       // "month" | "year"  ← REQUIRED
+          plan,                // "member" | "pro"
+          cycle,               // "month" | "year" – required by API to pick price
           email: emailForCheckout || undefined,
           user_id: userId || undefined,
         }),
