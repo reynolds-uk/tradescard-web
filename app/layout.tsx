@@ -1,6 +1,7 @@
 // app/layout.tsx
 import "./globals.css";
 import Nav from "./components/Nav";
+import SiteFooter from "./components/SiteFooter";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -19,12 +20,12 @@ function BuildStamp() {
 
   return (
     <footer className="border-t border-neutral-900/60">
-      <div className={`mx-auto max-w-5xl px-4 py-3 text-[11px] text-neutral-500 items-center gap-3 ${responsive}`}>
+      <div className={`mx-auto max-w-5xl items-center gap-3 px-4 py-3 text-[11px] text-neutral-500 ${responsive}`}>
         <span>env: {env}</span>
         <span>•</span>
         <span>build: {sha}</span>
         {note && (<><span>•</span><span className="truncate">{note}</span></>)}
-        {msg &&  (<><span>•</span><span className="truncate flex-1" title={msg}>{msg}</span></>)}
+        {msg &&  (<><span>•</span><span className="flex-1 truncate" title={msg}>{msg}</span></>)}
       </div>
     </footer>
   );
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="bg-neutral-950 text-neutral-100 antialiased">
         <Nav />
         {children}
+        <SiteFooter />
         <BuildStamp />
       </body>
     </html>

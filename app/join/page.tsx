@@ -40,7 +40,7 @@ export default function JoinPage() {
   const me = useMe();
   const showTrial = shouldShowTrial(me);
 
-  // Checkout helper
+  // Checkout helper (startMembership(plan, cycle, { trial }))
   const { busy, error: checkoutError, startMembership } = useJoinActions("/join");
 
   // Tabs & cycle
@@ -52,7 +52,7 @@ export default function JoinPage() {
   // Free block open/closed
   const [freeOpen, setFreeOpen] = useState(false);
 
-  // Email states (separate so inputs don’t “fight”)
+  // Email states (kept separate so inputs don’t fight)
   const [emailPaid, setEmailPaid] = useState("");
   const [emailFree, setEmailFree] = useState("");
 
@@ -64,6 +64,7 @@ export default function JoinPage() {
   // Refs for sensible focus
   const paidInputRef = useRef<HTMLInputElement>(null);
   const freeInputRef = useRef<HTMLInputElement>(null);
+  const bootstrapped = useRef(false);
 
   // Supabase client (client-side OTP)
   const supabase = useMemo(
@@ -79,17 +80,27 @@ export default function JoinPage() {
      Initialise from URL once
   ---------------------------*/
   useEffect(() => {
+    if (bootstrapped.current) return;
+    bootstrapped.current = true;
+
     const mode = (params.get("mode") || params.get("tab") || "").toLowerCase();
     const qPlan = (params.get("plan") || "").toLowerCase() as "" | "member" | "pro";
     const qCycle = (params.get("cycle") || "").toLowerCase() as "" | Cycle;
+    const qFree = params.get("free");
 
     if (mode === "signin") setTab("signin");
     if (mode === "join") setTab("join");
     if (qCycle === "year") setCycle("year");
+    if (qFree === "1") {
+      setFreeOpen(true);
+      setOpenInline(null);
+      queueMicrotask(() => freeInputRef.current?.focus());
+    }
 
     // Pre-open a paid card inline when logged out
     if (!me.user && (qPlan === "member" || qPlan === "pro")) {
       setOpenInline(qPlan);
+      setFreeOpen(false);
       queueMicrotask(() => paidInputRef.current?.focus());
     }
 
@@ -115,8 +126,25 @@ export default function JoinPage() {
   -------------------------------------------*/
   useEffect(() => {
     const mode = (params.get("mode") || params.get("tab") || "").toLowerCase();
+    const qFree = params.get("free");
+    const qCycle = (params.get("cycle") || "").toLowerCase() as "" | Cycle;
+    const qPlan = (params.get("plan") || "").toLowerCase() as "" | "member" | "pro";
+
     if (mode === "signin") setTab("signin");
     else if (mode === "join") setTab("join");
+
+    if (qCycle === "year") setCycle("year");
+    if (qFree === "1") {
+      setFreeOpen(true);
+      setOpenInline(null);
+    }
+
+    // allow marketing links to open a card inline even after mount
+    if (!me.user && (qPlan === "member" || qPlan === "pro")) {
+      setOpenInline(qPlan);
+      setFreeOpen(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params]);
 
   /* --------------------------
@@ -141,7 +169,6 @@ export default function JoinPage() {
       if (!data?.session?.user) return;
 
       if (openInline) {
-        // IMPORTANT: useJoinActions signature is (plan, cycle?, opts?)
         await startMembership(openInline, cycle, { trial: showTrial });
         return;
       }
@@ -440,7 +467,7 @@ export default function JoinPage() {
                 <PrimaryButton
                   onClick={() => {
                     setFreeOpen(true);
-                    setOpenInline(null); // ensure only one email box at a time
+                    setOpenInline(null); // only one email box at a time
                     queueMicrotask(() => freeInputRef.current?.focus());
                   }}
                   className="self-start md:self-auto"
@@ -476,7 +503,7 @@ export default function JoinPage() {
           </div>
         </>
       ) : (
-        // SIGN IN TAB (clean card)
+        // SIGN IN TAB
         <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
           <div className="mb-3 text-sm text-neutral-300">
             Enter your email and we’ll email you a secure sign-in link.
@@ -502,13 +529,6 @@ export default function JoinPage() {
           </p>
         </div>
       )}
-
-      {/* Page footer — simple trust strip */}
-      <div className="mx-auto mt-8 grid max-w-3xl gap-2 text-center text-xs text-neutral-400 sm:grid-cols-3">
-        <div>Secure checkout by <span className="text-neutral-300">Stripe</span></div>
-        <div>Cancel any time in <span className="text-neutral-300">Manage billing</span></div>
-        <div>No spam. We’ll only email about <span className="text-neutral-300">TradeCard</span>.</div>
-      </div>
     </Container>
   );
 }
