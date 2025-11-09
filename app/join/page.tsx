@@ -51,7 +51,6 @@ export default function JoinPage() {
   // Auth / promo context
   const me = useMe();
   const showTrial = shouldShowTrial(me);
-  const isSignedIn = !!me.user;
 
   // Checkout helper (startMembership(plan, cycle, { trial }))
   const { busy, error: checkoutError, startMembership } = useJoinActions("/join");
@@ -334,6 +333,31 @@ export default function JoinPage() {
     );
   }
 
+  function WhatYouGet() {
+    return (
+      <div className="mb-4 grid gap-2 sm:grid-cols-3">
+        <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-3">
+          <div className="text-sm font-semibold">Offers</div>
+          <p className="mt-1 text-sm text-neutral-300">
+            Real trade deals that cut everyday costs — tools, fuel, food & essentials.
+          </p>
+        </div>
+        <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-3">
+          <div className="text-sm font-semibold">Benefits</div>
+          <p className="mt-1 text-sm text-neutral-300">
+            Useful inclusions from day one, plus member-only partner pricing.
+          </p>
+        </div>
+        <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-3">
+          <div className="text-sm font-semibold">Rewards</div>
+          <p className="mt-1 text-sm text-neutral-300">
+            Earn points each month — entries to regular prize draws. Cancel any time.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   function PlanCard({
     plan,
     title,
@@ -474,10 +498,10 @@ export default function JoinPage() {
 
       <Container className={showSticky ? "safe-bottom-pad" : ""}>
         <PageHeader
-          title="Join TradeCard"
+          title="The card for the people who build Britain"
           subtitle={
             tab === "join"
-              ? "Protection, real trade deals and monthly rewards — start free and upgrade any time."
+              ? "A simple membership for the trade. Everything in one place — offers that cut everyday costs, benefits you can actually use, and rewards that make belonging feel good."
               : "Sign in securely with a magic link. No password needed."
           }
           aside={
@@ -517,6 +541,9 @@ export default function JoinPage() {
 
         {tab === "join" && <CycleTabs />}
 
+        {/* Quick value summary */}
+        {tab === "join" && <WhatYouGet />}
+
         {/* Alerts */}
         {info && (
           <div
@@ -544,8 +571,8 @@ export default function JoinPage() {
                 title="Member"
                 features={[
                   "All offers unlocked",
-                  "Protect Lite included",
-                  "Monthly prize entry",
+                  "Member benefits included",
+                  "Monthly rewards entries",
                   "Digital card",
                 ]}
                 badge="Most popular"
@@ -556,8 +583,8 @@ export default function JoinPage() {
                 title="Pro"
                 features={[
                   "Everything in Member",
-                  "Early-access & Pro-only offers",
-                  "Double prize entries",
+                  "Early access & Pro-only offers",
+                  "Bigger rewards boosts",
                 ]}
                 accent="pro"
               />
@@ -567,7 +594,7 @@ export default function JoinPage() {
             <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div className="text-sm text-neutral-300">
-                  Prefer to start free? Join with Access to browse and redeem offers. Upgrade any time.
+                  Prefer to start free? Join with Access to browse and redeem public offers. Upgrade any time.
                 </div>
 
                 {!freeOpen ? (
