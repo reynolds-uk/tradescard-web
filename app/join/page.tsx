@@ -1,7 +1,7 @@
 // app/join/page.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, memo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
@@ -42,20 +42,18 @@ export default function JoinPage() {
 
   const [tab, setTab] = useState<"join" | "signin">("join");
   const [cycle, setCycle] = useState<Cycle>("month");
+
+  // Which paid card (if any) is showing the inline email box
   const [openInline, setOpenInline] = useState<null | "member" | "pro">(null);
 
-  const [emailMember, setEmailMember] = useState("");
-  const [emailPro, setEmailPro] = useState("");
-  const [emailFree, setEmailFree] = useState("");
-
+  // Free path state (kept separate from paid)
   const [freeOpen, setFreeOpen] = useState(false);
+  const [emailFree, setEmailFree] = useState("");
 
   const [info, setInfo] = useState("");
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
 
-  const memberRef = useRef<HTMLInputElement>(null);
-  const proRef = useRef<HTMLInputElement>(null);
   const freeRef = useRef<HTMLInputElement>(null);
 
   const supabase = useMemo(
@@ -67,6 +65,7 @@ export default function JoinPage() {
     []
   );
 
+  // One-off initialisation from URL
   useEffect(() => {
     const mode = (params.get("mode") || "").toLowerCase();
     const qPlan = (params.get("plan") || "").toLowerCase() as "" | "member" | "pro";
@@ -75,11 +74,9 @@ export default function JoinPage() {
     if (qCycle === "year") setCycle("year");
     if (!me.user && (qPlan === "member" || qPlan === "pro")) {
       setOpenInline(qPlan);
-      queueMicrotask(() =>
-        (qPlan === "member" ? memberRef : proRef).current?.focus()
-      );
     }
 
+    // Handle auth errors in callback URL
     const err = params.get("error") || params.get("error_code");
     if (err) {
       const key = err.toLowerCase();
@@ -96,13 +93,13 @@ export default function JoinPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // If signed in, either continue checkout or go to /offers
+  // If already signed in, either continue checkout or go to /offers
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getSession();
       if (!data?.session?.user) return;
       if (openInline) {
-        // 🔧 FIX: pass only the interval (cycle)
+        // NOTE: useJoinActions expects the billing interval (cycle) only
         await startMembership(openInline, cycle);
         return;
       }
@@ -123,6 +120,7 @@ export default function JoinPage() {
     if (error) throw error;
   }
 
+  // Free (Access) sign-up
   async function handleFreeJoin() {
     setInfo("");
     try {
@@ -144,43 +142,18 @@ export default function JoinPage() {
     }
   }
 
-  async function choose(plan: Exclude<Plan, "access">) {
+  // Paid plan choose (when already logged in)
+  async function choosePaid(plan: "member" | "pro") {
     setInfo("");
     if (!me.user) {
-      setOpenInline(plan);
-      queueMicrotask(() =>
-        (plan === "member" ? memberRef : proRef).current?.focus()
-      );
+      setOpenInline(plan); // open inline box; focus handled inside the card component
       return;
     }
     track(plan === "member" ? "join_member_click" : "join_pro_click", {
       trial: showTrial,
       cycle,
     });
-    // 🔧 FIX: pass only the interval (cycle)
     await startMembership(plan, cycle);
-  }
-
-  async function sendPaidLink(plan: "member" | "pro") {
-    const value = plan === "member" ? emailMember : emailPro;
-    setInfo("");
-    try {
-      setSending(true);
-      await sendMagicLink(value, "/join");
-      setSent(true);
-      setInfo(`Link sent. After you sign in, we’ll continue to ${plan} (${cycle}).`);
-      track("join_free_click");
-    } catch (e) {
-      setSent(false);
-      setInfo(
-        (e as Error)?.message === "invalid_email"
-          ? "Enter a valid email to get your sign-in link."
-          : "We couldn’t send the link just now. Please try again."
-      );
-      (plan === "member" ? memberRef : proRef).current?.focus();
-    } finally {
-      setSending(false);
-    }
   }
 
   const onEnter =
@@ -210,86 +183,6 @@ export default function JoinPage() {
     );
   }
 
-  function PaidCard({
-    plan,
-    title,
-    features,
-    email,
-    setEmail,
-    inputRef,
-    accent,
-  }: {
-    plan: "member" | "pro";
-    title: string;
-    features: string[];
-    email: string;
-    setEmail: (v: string) => void;
-    inputRef: React.RefObject<HTMLInputElement>;
-    accent?: "pro" | "member";
-  }) {
-    const price = PRICE[plan][cycle];
-    const isOpen = openInline === plan;
-
-    const accentCls =
-      accent === "pro"
-        ? "border-amber-400/30 ring-1 ring-amber-400/20"
-        : "border-neutral-800";
-
-    const ctaLabel =
-      plan === "member" && cycle === "month" && showTrial
-        ? TRIAL_COPY
-        : plan === "member"
-        ? `Choose Member – ${price}`
-        : `Choose Pro – ${price}`;
-
-    return (
-      <div className={`rounded-2xl border ${accentCls} bg-neutral-900 p-4`}>
-        <div className="flex items-center justify-between">
-          <div className="text-lg font-semibold">{title}</div>
-          <div className="text-sm text-neutral-300">{price}</div>
-        </div>
-
-        <ul className="mt-2 space-y-1 text-sm text-neutral-300">
-          {features.map((f) => (
-            <li key={f}>• {f}</li>
-          ))}
-        </ul>
-
-        <div className="mt-4">
-          <div className={isOpen ? "hidden" : "block"}>
-            <PrimaryButton
-              onClick={() => choose(plan)}
-              disabled={busy || sending}
-              className="w-full"
-            >
-              {ctaLabel}
-            </PrimaryButton>
-          </div>
-
-          <div className={!isOpen ? "hidden" : "grid gap-2 sm:grid-cols-[1fr_auto]"}>
-            <input
-              ref={inputRef}
-              type="email"
-              inputMode="email"
-              placeholder="you@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={onEnter(() => sendPaidLink(plan))}
-              className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
-              autoComplete="email"
-            />
-            <PrimaryButton onClick={() => sendPaidLink(plan)} disabled={busy || sending}>
-              {sent ? "Link sent ✓" : sending ? "Sending…" : "Send sign-in link"}
-            </PrimaryButton>
-            <p className="col-span-full text-xs text-neutral-500">
-              We’ll continue to <strong>{title}</strong> ({cycle}) after you sign in.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <Container>
       <PageHeader
@@ -306,6 +199,7 @@ export default function JoinPage() {
         }
       />
 
+      {/* Top tabs */}
       <div className="mb-3 inline-flex rounded-xl border border-neutral-800 p-1">
         <button
           onClick={() => setTab("join")}
@@ -329,6 +223,7 @@ export default function JoinPage() {
 
       {tab === "join" && <CycleTabs />}
 
+      {/* Alerts */}
       {info && (
         <div className="mb-4 rounded border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-blue-200 text-sm">
           {info}
@@ -340,10 +235,12 @@ export default function JoinPage() {
         </div>
       )}
 
+      {/* Main */}
       {tab === "join" ? (
         <>
           <div className="grid gap-4 md:grid-cols-2">
             <PaidCard
+              key="member"
               plan="member"
               title="Member"
               features={[
@@ -352,12 +249,16 @@ export default function JoinPage() {
                 "Monthly prize entry",
                 "Digital card",
               ]}
-              email={emailMember}
-              setEmail={setEmailMember}
-              inputRef={memberRef}
-              accent="member"
+              price={PRICE.member[cycle]}
+              showTrial={showTrial && cycle === "month"}
+              open={openInline === "member"}
+              onOpen={() => setOpenInline("member")}
+              cycle={cycle}
+              onChoose={() => choosePaid("member")}
+              onStartAfterSignin={(email) => sendMagicLink(email, "/join")}
             />
             <PaidCard
+              key="pro"
               plan="pro"
               title="Pro"
               features={[
@@ -365,13 +266,17 @@ export default function JoinPage() {
                 "Early-access deals & Pro-only offers",
                 "Double prize entries",
               ]}
-              email={emailPro}
-              setEmail={setEmailPro}
-              inputRef={proRef}
-              accent="pro"
+              price={PRICE.pro[cycle]}
+              showTrial={false}
+              open={openInline === "pro"}
+              onOpen={() => setOpenInline("pro")}
+              cycle={cycle}
+              onChoose={() => choosePaid("pro")}
+              onStartAfterSignin={(email) => sendMagicLink(email, "/join")}
             />
           </div>
 
+          {/* Free path */}
           <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="text-sm text-neutral-300">
@@ -382,7 +287,8 @@ export default function JoinPage() {
                 <PrimaryButton
                   onClick={() => {
                     setFreeOpen(true);
-                    queueMicrotask(() => freeRef.current?.focus());
+                    // focus once the input appears
+                    setTimeout(() => freeRef.current?.focus(), 0);
                   }}
                   className="self-start md:self-auto"
                 >
@@ -418,6 +324,7 @@ export default function JoinPage() {
           </div>
         </>
       ) : (
+        // Sign in tab
         <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
           <div className="text-sm text-neutral-300">
             Enter your email and we’ll send you a magic link.
@@ -446,3 +353,131 @@ export default function JoinPage() {
     </Container>
   );
 }
+
+/* --------------------------
+   Paid card (isolated state)
+---------------------------*/
+
+const PaidCard = memo(function PaidCard({
+  plan,
+  title,
+  features,
+  price,
+  showTrial,
+  open,
+  onOpen,
+  cycle,
+  onChoose,
+  onStartAfterSignin,
+}: {
+  plan: "member" | "pro";
+  title: string;
+  features: string[];
+  price: string;
+  showTrial: boolean;
+  open: boolean;
+  onOpen: () => void;
+  cycle: Cycle;
+  onChoose: () => void; // when logged-in
+  onStartAfterSignin: (email: string) => Promise<void>; // send magic link and return to /join
+}) {
+  // Local email & focus, so re-renders elsewhere never remount this <input>
+  const [email, setEmail] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [info, setInfo] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Focus when this card opens
+  useEffect(() => {
+    if (open) setTimeout(() => inputRef.current?.focus(), 0);
+  }, [open]);
+
+  const onEnter =
+    (fn: () => void) => (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        fn();
+      }
+    };
+
+  async function sendLink() {
+    setInfo("");
+    try {
+      setSending(true);
+      await onStartAfterSignin(email); // redirects back to /join after sign-in
+      setSent(true);
+      setInfo(`Link sent. After you sign in, we’ll continue to ${plan} (${cycle}).`);
+      // Using existing event for link sends
+      track("join_free_click");
+    } catch (e) {
+      setSent(false);
+      setInfo("We couldn’t send the link just now. Please try again.");
+      inputRef.current?.focus();
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const ctaLabel =
+    plan === "member" && showTrial
+      ? TRIAL_COPY
+      : plan === "member"
+      ? `Choose Member – ${price}`
+      : `Choose Pro – ${price}`;
+
+  const accentCls =
+    plan === "pro" ? "border-amber-400/30 ring-1 ring-amber-400/20" : "border-neutral-800";
+
+  return (
+    <div className={`rounded-2xl border ${accentCls} bg-neutral-900 p-4`}>
+      <div className="flex items-center justify-between">
+        <div className="text-lg font-semibold">{title}</div>
+        <div className="text-sm text-neutral-300">{price}</div>
+      </div>
+
+      <ul className="mt-2 space-y-1 text-sm text-neutral-300">
+        {features.map((f) => (
+          <li key={f}>• {f}</li>
+        ))}
+      </ul>
+
+      {!open ? (
+        <PrimaryButton
+          onClick={onOpen /* open inline if logged out; onChoose runs from parent when logged in */}
+          disabled={sending}
+          className="mt-4 w-full"
+        >
+          {ctaLabel}
+        </PrimaryButton>
+      ) : (
+        <div className="mt-4">
+          {info && (
+            <div className="mb-2 rounded border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-blue-200 text-xs">
+              {info}
+            </div>
+          )}
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+            <input
+              ref={inputRef}
+              type="email"
+              inputMode="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={onEnter(sendLink)}
+              className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
+              autoComplete="email"
+            />
+            <PrimaryButton onClick={sendLink} disabled={sending}>
+              {sent ? "Link sent ✓" : sending ? "Sending…" : "Send sign-in link"}
+            </PrimaryButton>
+            <p className="col-span-full text-xs text-neutral-500">
+              We’ll continue to <strong>{title}</strong> ({cycle}) after you sign in.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+});
