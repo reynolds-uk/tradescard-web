@@ -2,31 +2,28 @@
 
 export type TrackEvent =
   | "welcome_view"
-  | "welcome_copy_card"
   | "welcome_cta_offers"
   | "welcome_cta_benefits"
   | "welcome_cta_rewards"
   | "welcome_cta_join_member"
-  | "welcome_cta_join_member_banner"
-  | "offer_click"
   | "offers_nudge_upgrade_click"
+  | "offer_click"
   | "offers_nudge_join_free_click"
   | "join_member_click"
   | "join_pro_click"
-  | "join_free_click";
+  | "join_free_click"
+  | "welcome_profile_saved"
+  | "welcome_skip";
 
+// keep your existing `track()` implementation as-is
 export function track(
   event: TrackEvent,
   meta: Record<string, string | number | boolean> = {}
 ) {
   try {
-    window.fetch("/api/track", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event, meta }),
-      keepalive: true,
-    });
-  } catch (err) {
-    console.warn("Track error:", err);
-  }
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("tc:track", { detail: { event, meta } }));
+    }
+    // no-op/log to console or your real analytics here
+  } catch {}
 }
