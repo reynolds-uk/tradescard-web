@@ -31,7 +31,7 @@ export default function RewardsPage() {
 
   const subtitle = useMemo(() => {
     if (!ready) return "Loading…";
-    return "Earn reward points on Member or Pro. Points convert to entries for our prize draws — plus a free postal route is always available.";
+    return "Earn reward points on Member or Pro. Points convert to entries for our prize draws — a free postal route is always available.";
   }, [ready]);
 
   // Postal modal
@@ -42,87 +42,114 @@ export default function RewardsPage() {
   const currentCloses = new Date(now.getFullYear(), now.getMonth() + 1, 1);
   const lifetimeCloses = new Date(now.getFullYear(), 11, 31);
 
+  // Show sticky CTA on public view only
+  const showSticky = ready && !isPaid;
+
   return (
-    <Container>
-      <PageHeader
-        title="Rewards"
-        subtitle={subtitle}
-        aside={
-          !isPaid && showTrial ? (
-            <span className="hidden sm:inline rounded bg-amber-400/20 text-amber-200 text-xs px-2 py-1 border border-amber-400/30">
-              {TRIAL_COPY}
-            </span>
-          ) : undefined
-        }
-      />
-
-      {/* Explainer (no personal counters on public page) */}
-      <Explainer />
-
-      {/* Draws */}
-      <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <CompCard
-          tone="primary"
-          title="Current Prize"
-          kicker="Time-bound draw"
-          headline="Win a £1,000 Trade Bundle"
-          copy="Tools, fuel and food credits to keep your month moving."
-          closes={currentCloses}
-          bullets={[
-            "Entries earned each month from your points",
-            "Member: 1.25× boost • Pro: 1.5× boost",
-            "No purchase necessary (postal route available)",
-          ]}
-          ctaLabel={showTrial ? TRIAL_COPY : "Become a Member"}
-          onJoin={() => routeToJoin("member")}
-          onPostal={() => setOpenPostal(true)}
-        />
-
-        <CompCard
-          tone="amber"
-          title="Lifetime Points Prize"
-          kicker="Ongoing draw"
-          headline="Win a Weekend Away"
-          copy="Every lifetime point you earn is an entry. Active members can win."
-          closes={lifetimeCloses}
-          bullets={[
-            "Entries accumulate over time from lifetime points",
-            "Pro keeps the 1.5× boost on all points earned",
-            "Postal route available for each draw period",
-          ]}
-          ctaLabel={showTrial ? TRIAL_COPY : "Go Pro for Boosted Entries"}
-          onJoin={() => routeToJoin("pro")}
-          onPostal={() => setOpenPostal(true)}
-        />
-      </div>
-
-      {/* Plan nudges */}
-      <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900/70 p-4">
-        <div className="grid items-center gap-3 md:grid-cols-[1fr_auto_auto]">
-          <div className="text-sm text-neutral-300">
-            Join today — points convert to entries automatically. Cancel any time.
+    <>
+      {/* Sticky CTA for visitors (mobile) */}
+      {showSticky && (
+        <div
+          className="md:hidden fixed inset-x-0 bottom-0 z-40 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70"
+          role="region"
+          aria-label="Unlock rewards"
+        >
+          <div className="safe-inset-bottom" />
+          <div className="mx-auto max-w-5xl px-4 py-3 flex items-center justify-between gap-2">
+            <div className="text-xs text-neutral-300">Start earning points & entries</div>
+            <PrimaryButton
+              onClick={() => routeToJoin("member")}
+              className="text-xs px-3 py-1.5"
+            >
+              {showTrial ? TRIAL_COPY : "Become a Member"}
+            </PrimaryButton>
           </div>
-          <button
-            onClick={() => routeToJoin("member")}
-            className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800"
-          >
-            Join Member
-          </button>
-          <PrimaryButton onClick={() => routeToJoin("pro")} className="text-sm">
-            Go Pro
-          </PrimaryButton>
         </div>
-      </div>
+      )}
 
-      {/* Tier ladder */}
-      <Ladder />
+      <Container className={showSticky ? "safe-bottom-pad md:pb-10" : "pb-10"}>
+        <PageHeader
+          title="Rewards"
+          subtitle={subtitle}
+          aside={
+            !isPaid && showTrial ? (
+              <span className="hidden sm:inline rounded bg-amber-400/20 text-amber-200 text-xs px-2 py-1 border border-amber-400/30">
+                {TRIAL_COPY}
+              </span>
+            ) : undefined
+          }
+        />
 
-      {/* FAQs */}
-      <FaqBlock setOpenPostal={setOpenPostal} />
+        {/* Explainer (no personal counters on public page) */}
+        <Explainer />
 
-      {/* Postal entry modal */}
-      {openPostal && <PostalModal onClose={() => setOpenPostal(false)} showTrial={showTrial} />}
-    </Container>
+        {/* Draws */}
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <CompCard
+            tone="primary"
+            title="Current Prize"
+            kicker="Time-bound draw"
+            headline="Win a £1,000 Trade Bundle"
+            copy="Tools, fuel and food credits to keep your month moving."
+            closes={currentCloses}
+            bullets={[
+              "Entries earned each month from your points",
+              "Member: 1.25× boost • Pro: 1.5× boost",
+              "No purchase necessary (postal route available)",
+            ]}
+            ctaLabel={showTrial ? TRIAL_COPY : "Become a Member"}
+            onJoin={() => routeToJoin("member")}
+            onPostal={() => setOpenPostal(true)}
+          />
+
+          <CompCard
+            tone="amber"
+            title="Lifetime Points Prize"
+            kicker="Ongoing draw"
+            headline="Win a Weekend Away"
+            copy="Every lifetime point you earn is an entry. Active members can win."
+            closes={lifetimeCloses}
+            bullets={[
+              "Entries accumulate over time from lifetime points",
+              "Pro keeps the 1.5× boost on all points earned",
+              "Postal route available for each draw period",
+            ]}
+            ctaLabel={showTrial ? TRIAL_COPY : "Go Pro for Boosted Entries"}
+            onJoin={() => routeToJoin("pro")}
+            onPostal={() => setOpenPostal(true)}
+          />
+        </div>
+
+        {/* Plan nudges */}
+        <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900/70 p-4">
+          <div className="grid items-center gap-3 md:grid-cols-[1fr_auto_auto]">
+            <div className="text-sm text-neutral-300">
+              Join today — points convert to entries automatically. Cancel any time.
+            </div>
+            <button
+              onClick={() => routeToJoin("member")}
+              className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800"
+            >
+              Join Member
+            </button>
+            <PrimaryButton onClick={() => routeToJoin("pro")} className="text-sm">
+              Go Pro
+            </PrimaryButton>
+          </div>
+        </div>
+
+        {/* Tier ladder */}
+        <Ladder />
+
+        {/* FAQs */}
+        <FaqBlock setOpenPostal={setOpenPostal} />
+
+        {/* Postal entry modal */}
+        {openPostal && (
+          <PostalModal onClose={() => setOpenPostal(false)} showTrial={showTrial} />
+        )}
+      </Container>
+    </>
   );
 }
 
@@ -130,9 +157,9 @@ export default function RewardsPage() {
 
 function Explainer() {
   return (
-    <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
-      <div className="text-sm font-semibold">How rewards work</div>
-      <ul className="mt-2 space-y-1 text-sm text-neutral-300">
+    <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 text-sm leading-snug md:text-base">
+      <div className="font-semibold">How rewards work</div>
+      <ul className="mt-2 space-y-1 text-neutral-300">
         <li>• Join <strong>Member</strong> or <strong>Pro</strong> to start earning monthly points.</li>
         <li>• Points convert to entries for the current prize draw.</li>
         <li>• Your <strong>lifetime points</strong> also count as entries for the ongoing Lifetime Prize.</li>
@@ -337,7 +364,13 @@ function Faq({ q, a }: { q: string; a: React.ReactNode }) {
   );
 }
 
-function PostalModal({ onClose, showTrial }: { onClose: () => void; showTrial: boolean }) {
+function PostalModal({
+  onClose,
+  showTrial,
+}: {
+  onClose: () => void;
+  showTrial: boolean;
+}) {
   return (
     <div
       role="dialog"

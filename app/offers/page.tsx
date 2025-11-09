@@ -27,7 +27,7 @@ type OfferWithExtras = Offer & {
 };
 
 export default function OffersPage() {
-  // Auth / membership
+  /* ---------- Auth / membership ---------- */
   const me = useMe();
   const ready = useMeReady();
   const tier: Tier = (me?.tier as Tier) ?? "access";
@@ -37,20 +37,20 @@ export default function OffersPage() {
     isPaidTier && (me?.status === "active" || me?.status === "trialing");
   const showTrial = shouldShowTrial(me);
 
-  // Where to bounce back after checkout/auth
+  /* Where to bounce back after checkout/auth */
   const next = "/offers";
   const { busy, error: checkoutErr } = useJoinActions(next);
 
-  // Data
+  /* ---------- Data ---------- */
   const [items, setItems] = useState<Offer[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchErr, setFetchErr] = useState<string>("");
 
-  // UX: search + category filter
+  /* ---------- UX: search + category filter ---------- */
   const [query, setQuery] = useState("");
   const [cat, setCat] = useState<string>("All");
 
-  // Fetch offers
+  /* ---------- Fetch offers ---------- */
   useEffect(() => {
     if (!ready) return;
     const ctrl = new AbortController();
@@ -88,7 +88,7 @@ export default function OffersPage() {
     return () => ctrl.abort();
   }, [ready, isActivePaid]);
 
-  // Redemption rules
+  /* ---------- Actions ---------- */
   const canRedeem = isLoggedIn;
 
   const handleUnlockPaid = (source: NudgeSource) => {
@@ -116,7 +116,7 @@ export default function OffersPage() {
     if (o.link) window.open(o.link, "_blank", "noopener,noreferrer");
   };
 
-  // Subtitle per state
+  /* ---------- UI state ---------- */
   const subtitle = useMemo(() => {
     if (!ready) return "Loading your offers…";
     if (isActivePaid) return "All your member deals in one place.";
@@ -125,55 +125,52 @@ export default function OffersPage() {
     return "See what’s on. Join free to redeem, upgrade to unlock more.";
   }, [ready, isActivePaid, isLoggedIn]);
 
-  // Category list (auto from feed)
   const categories = useMemo(() => {
     const set = new Set<string>();
     items.forEach((o) => o.category && set.add(o.category));
     return ["All", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
   }, [items]);
 
-  // Apply filters (search title + optional brand/merchant + category)
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return items.filter((o) => {
       const ox = o as OfferWithExtras;
       const catOk = cat === "All" || (o.category || "") === cat;
       if (!q) return catOk;
-      const hay = `${o.title ?? ""} ${
-        ox.merchant ?? ox.brand ?? ""
-      } ${o.category ?? ""}`.toLowerCase();
+      const hay = `${o.title ?? ""} ${ox.merchant ?? ox.brand ?? ""} ${o.category ?? ""}`.toLowerCase();
       return catOk && hay.includes(q);
     });
   }, [items, cat, query]);
 
-  // Sticky mobile CTA
+  /* Sticky join/upgrade bar shows for anyone not on an active paid plan */
   const showSticky = ready && !isActivePaid;
   const stickyIsVisitor = showSticky && !isLoggedIn;
 
-  // Interleave a member teaser every N cards for visitors/free
+  /* Interleave teaser cards for visitors/free */
   const withTeasers = useMemo(() => {
     if (isActivePaid) return filtered.map((o) => ({ type: "offer", o }) as const);
     const out: Array<{ type: "offer"; o: Offer } | { type: "teaser"; key: string }> = [];
     filtered.forEach((o, i) => {
       out.push({ type: "offer", o });
-      if ((i + 1) % 4 === 0) {
-        out.push({ type: "teaser", key: `teaser-${i}` });
-      }
+      if ((i + 1) % 4 === 0) out.push({ type: "teaser", key: `teaser-${i}` });
     });
     return out;
   }, [filtered, isActivePaid]);
 
   return (
     <>
-      {/* Sticky CTA (mobile) */}
+      {/* ---------- Sticky CTA (mobile) ---------- */}
       {showSticky && (
-        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70 md:hidden"
-             style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0px)" }}>
-          <div className="mx-auto max-w-5xl px-4 py-3 flex items-center justify-between gap-2">
+        <div
+          className="fixed inset-x-0 bottom-0 z-40 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70 md:hidden"
+          role="region"
+          aria-label="Join or upgrade"
+        >
+          {/* iOS home-indicator clearance */}
+          <div className="safe-inset-bottom" />
+          <div className="mx-auto flex max-w-5xl items-center justify-between gap-2 px-4 py-3">
             <div className="text-xs text-neutral-300">
-              {stickyIsVisitor
-                ? "Join free to redeem"
-                : "Upgrade to unlock more offers"}
+              {stickyIsVisitor ? "Join free to redeem" : "Upgrade to unlock more offers"}
             </div>
             <div className="flex items-center gap-2">
               {stickyIsVisitor && (
@@ -200,7 +197,9 @@ export default function OffersPage() {
         </div>
       )}
 
-      <Container className="pb-24 md:pb-10">
+      {/* ---------- Content ---------- */}
+      {/* When sticky bar is present, reserve space with safe-bottom-pad (prevents overlap) */}
+      <Container className={showSticky ? "safe-bottom-pad md:pb-10" : "pb-10"}>
         <PageHeader
           title="Offers"
           subtitle={subtitle}
@@ -216,25 +215,21 @@ export default function OffersPage() {
         {/* Context card for visitors/free users */}
         {!isActivePaid && ready && (
           <div
-            className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-neutral-800 bg-neutral-900/60 p-4"
+            className="mb-4 rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 text-sm leading-snug md:text-base"
             role="region"
             aria-label="Membership context"
           >
-            <div className="text-sm text-neutral-300">
-              <div className="font-medium text-neutral-100">
-                You’re browsing the public view
-              </div>
-              <ul className="mt-1 list-disc pl-5 space-y-1">
-                <li>Join free to redeem today’s deals</li>
-                <li>Upgrade for member-only offers & monthly rewards</li>
-                <li>Cancel anytime — no nonsense</li>
-              </ul>
-            </div>
-            <div className="flex shrink-0 gap-2">
+            <div className="font-medium text-neutral-100">You’re browsing the public view</div>
+            <ul className="mt-1 list-disc pl-5 space-y-1 text-neutral-300">
+              <li>Join free to redeem today’s deals</li>
+              <li>Upgrade for member-only offers & monthly rewards</li>
+              <li>Cancel anytime — no nonsense</li>
+            </ul>
+            <div className="mt-3 flex flex-wrap gap-2">
               {!isLoggedIn && (
                 <button
                   onClick={() => handleJoinFree("banner")}
-                  className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm hover:bg-neutral-800"
+                  className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-1.5 hover:bg-neutral-800"
                 >
                   Join free
                 </button>
@@ -250,23 +245,25 @@ export default function OffersPage() {
           </div>
         )}
 
-        {/* Top controls: category chips + search */}
+        {/* Controls: scrollable chips on mobile + search */}
         <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap gap-2">
-            {categories.map((c) => (
-              <button
-                key={c}
-                onClick={() => setCat(c)}
-                className={`rounded-full border px-3 py-1 text-sm transition-colors ${
-                  cat === c
-                    ? "border-neutral-700 bg-neutral-800"
-                    : "border-neutral-800 bg-neutral-900 hover:bg-neutral-800"
-                }`}
-                aria-pressed={cat === c}
-              >
-                {c}
-              </button>
-            ))}
+          <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
+            <div className="inline-flex gap-2 pr-1">
+              {categories.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setCat(c)}
+                  className={`rounded-full border px-3 py-1 text-sm transition-colors ${
+                    cat === c
+                      ? "border-neutral-700 bg-neutral-800"
+                      : "border-neutral-800 bg-neutral-900 hover:bg-neutral-800"
+                  }`}
+                  aria-pressed={cat === c}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="flex items-center">
             <input
@@ -316,7 +313,7 @@ export default function OffersPage() {
                 {!isLoggedIn && (
                   <button
                     onClick={() => handleJoinFree("empty")}
-                    className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm hover:bg-neutral-800"
+                    className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-1.5 hover:bg-neutral-800"
                   >
                     Join free
                   </button>
@@ -350,7 +347,6 @@ export default function OffersPage() {
                   }
                 />
               ) : (
-                // Member teaser card (for visitors/free users)
                 <div
                   key={row.key}
                   className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 flex flex-col justify-between"
@@ -358,9 +354,7 @@ export default function OffersPage() {
                   aria-label="Members get more"
                 >
                   <div>
-                    <div className="text-sm font-medium text-neutral-100">
-                      More for Members
-                    </div>
+                    <div className="text-sm font-medium text-neutral-100">More for Members</div>
                     <p className="mt-1 text-sm text-neutral-300">
                       Unlock member-only offers, early access and monthly rewards.
                     </p>
@@ -369,7 +363,7 @@ export default function OffersPage() {
                     {!isLoggedIn && (
                       <button
                         onClick={() => handleJoinFree("teaser")}
-                        className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm hover:bg-neutral-800"
+                        className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-1.5 hover:bg-neutral-800"
                       >
                         Join free
                       </button>

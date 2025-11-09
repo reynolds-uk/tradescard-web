@@ -21,8 +21,8 @@ const APP_URL =
 
 // Display prices (don’t hard-wire Stripe IDs here)
 const PRICE = {
-  member: { month: "£2.99/mo", year: "£29.00/yr" },
-  pro: { month: "£7.99/mo", year: "£79.00/yr" },
+  member: { month: 2.99, year: 29.0 },
+  pro: { month: 7.99, year: 79.0 },
 } as const;
 
 const AUTH_ERROR_MAP: Record<string, string> = {
@@ -32,6 +32,18 @@ const AUTH_ERROR_MAP: Record<string, string> = {
   server_error: "We had trouble verifying your link. Try again.",
 };
 
+function fmtMonth(v: number) {
+  return `£${v.toFixed(2)}/mo`;
+}
+function fmtYear(v: number) {
+  return `£${v.toFixed(2)}/yr`;
+}
+function monthsFree(monthly: number, yearly: number) {
+  const saved = monthly * 12 - yearly;
+  const months = Math.round(saved / monthly);
+  return { months: Math.max(0, months), saved: Math.max(0, saved) };
+}
+
 export default function JoinPage() {
   const router = useRouter();
   const params = useSearchParams();
@@ -39,6 +51,7 @@ export default function JoinPage() {
   // Auth / promo context
   const me = useMe();
   const showTrial = shouldShowTrial(me);
+  const isSignedIn = !!me.user;
 
   // Checkout helper (startMembership(plan, cycle, { trial }))
   const { busy, error: checkoutError, startMembership } = useJoinActions("/join");
@@ -47,12 +60,15 @@ export default function JoinPage() {
   const [tab, setTab] = useState<"join" | "signin">("join");
   const [cycle, setCycle] = useState<Cycle>("month");
 
+  // Selected paid plan (for sticky CTA)
+  const [selectedPlan, setSelectedPlan] = useState<Exclude<Plan, "access">>("member");
+
   // Which paid card has its inline email open
   const [openInline, setOpenInline] = useState<null | "member" | "pro">(null);
   // Free block open/closed
   const [freeOpen, setFreeOpen] = useState(false);
 
-  // Email states (separate so inputs don’t “fight”)
+  // Email states
   const [emailPaid, setEmailPaid] = useState("");
   const [emailFree, setEmailFree] = useState("");
 
@@ -61,7 +77,7 @@ export default function JoinPage() {
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
 
-  // Refs for sensible focus
+  // Refs
   const paidInputRef = useRef<HTMLInputElement>(null);
   const freeInputRef = useRef<HTMLInputElement>(null);
   const bootstrapped = useRef(false);
@@ -91,6 +107,10 @@ export default function JoinPage() {
     if (mode === "signin") setTab("signin");
     if (mode === "join") setTab("join");
     if (qCycle === "year") setCycle("year");
+    if (qPlan === "member" || qPlan === "pro") {
+      setSelectedPlan(qPlan);
+      setOpenInline(null);
+    }
     if (qFree === "1") {
       setFreeOpen(true);
       setOpenInline(null);
@@ -134,6 +154,7 @@ export default function JoinPage() {
     else if (mode === "join") setTab("join");
 
     if (qCycle === "year") setCycle("year");
+    if (qPlan === "member" || qPlan === "pro") setSelectedPlan(qPlan);
     if (qFree === "1") {
       setFreeOpen(true);
       setOpenInline(null);
@@ -214,13 +235,14 @@ export default function JoinPage() {
     }
   }
 
-  // Choose a paid plan
+  // Choose a paid plan (from cards or sticky CTA)
   async function choose(plan: Exclude<Plan, "access">) {
     setInfo("");
     // Logged out → open inline on that card, close free
     if (!me.user) {
       setOpenInline(plan);
       setFreeOpen(false);
+      setSelectedPlan(plan);
       queueMicrotask(() => paidInputRef.current?.focus());
       return;
     }
@@ -265,23 +287,49 @@ export default function JoinPage() {
     };
 
   /* --------------------------
-     Small UI helpers
+     Derived UI for sticky CTA
+  ---------------------------*/
+  const { months: mFree, saved } = monthsFree(
+    PRICE[selectedPlan].month,
+    PRICE[selectedPlan].year
+  );
+  const monthlyLabel = fmtMonth(PRICE[selectedPlan].month);
+  const yearlyLabel = fmtYear(PRICE[selectedPlan].year);
+
+  const stickyLabel =
+    selectedPlan === "member" && cycle === "month" && showTrial
+      ? TRIAL_COPY
+      : cycle === "month"
+      ? `Continue — ${monthlyLabel}`
+      : `Continue — ${yearlyLabel}`;
+
+  const showSticky = tab === "join" && !openInline; // hide when email box is open to avoid overlap
+
+  /* --------------------------
+     Small UI pieces
   ---------------------------*/
   function CycleTabs() {
     return (
-      <div className="mb-4 inline-flex rounded-xl border border-neutral-800 p-1">
-        {(["month", "year"] as const).map((c) => (
-          <button
-            key={c}
-            onClick={() => setCycle(c)}
-            className={`px-3 py-1.5 text-sm rounded-lg ${
-              cycle === c ? "bg-neutral-800" : "hover:bg-neutral-900"
-            }`}
-            aria-pressed={cycle === c}
-          >
-            {c === "month" ? "Monthly" : "Yearly (save)"}
-          </button>
-        ))}
+      <div className="mb-4 inline-flex items-center gap-2">
+        <div className="inline-flex rounded-xl border border-neutral-800 p-1">
+          {(["month", "year"] as const).map((c) => (
+            <button
+              key={c}
+              onClick={() => setCycle(c)}
+              className={`px-3 py-1.5 text-sm rounded-lg ${
+                cycle === c ? "bg-neutral-800" : "hover:bg-neutral-900"
+              }`}
+              aria-pressed={cycle === c}
+            >
+              {c === "month" ? "Monthly" : "Yearly (save)"}
+            </button>
+          ))}
+        </div>
+        {cycle === "year" && (
+          <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-300">
+            {mFree > 0 ? `${mFree} months free` : "Save vs monthly"} • £{saved.toFixed(2)} saved
+          </span>
+        )}
       </div>
     );
   }
@@ -300,12 +348,15 @@ export default function JoinPage() {
     badge?: string;
   }) {
     const isInline = openInline === plan;
-    const price = PRICE[plan][cycle];
+    const price =
+      cycle === "month" ? fmtMonth(PRICE[plan].month) : fmtYear(PRICE[plan].year);
 
     const accentCls =
       accent === "pro"
         ? "border-amber-400/30 ring-1 ring-amber-400/20"
         : "border-neutral-800";
+
+    const selected = selectedPlan === plan;
 
     // CTA label logic (promo only on Member monthly)
     const ctaLabel =
@@ -316,9 +367,25 @@ export default function JoinPage() {
         : `Choose Pro – ${price}`;
 
     return (
-      <div className={`rounded-2xl border ${accentCls} bg-neutral-900 p-4`}>
+      <div
+        className={`rounded-2xl border ${accentCls} bg-neutral-900 p-4`}
+        onClick={() => setSelectedPlan(plan)}
+        role="button"
+        aria-pressed={selected}
+      >
         <div className="flex items-center justify-between">
-          <div className="text-lg font-semibold">{title}</div>
+          <div className="flex items-center gap-2">
+            <span
+              className={`inline-block h-4 w-4 rounded-full border ${
+                selected ? "border-white" : "border-neutral-500"
+              } relative`}
+            >
+              {selected && (
+                <span className="absolute inset-0 m-[3px] block rounded-full bg-white" />
+              )}
+            </span>
+            <div className="text-lg font-semibold">{title}</div>
+          </div>
           <div className="flex items-center gap-2">
             {badge && (
               <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-300">
@@ -337,7 +404,10 @@ export default function JoinPage() {
 
         {!isInline ? (
           <PrimaryButton
-            onClick={() => choose(plan)}
+            onClick={(e) => {
+              e.stopPropagation();
+              choose(plan);
+            }}
             disabled={busy || sending}
             className="mt-4 w-full"
           >
@@ -376,176 +446,207 @@ export default function JoinPage() {
      Render
   ---------------------------*/
   return (
-    <Container>
-      <PageHeader
-        title="Join TradeCard"
-        subtitle={
-          tab === "join"
-            ? "Protection, real trade deals and monthly rewards — start free and upgrade any time."
-            : "Sign in securely with a magic link. No password needed."
-        }
-        aside={
-          tab === "join" && showTrial ? (
-            <span className="promo-chip promo-chip-xs-hide">{TRIAL_COPY}</span>
-          ) : undefined
-        }
-      />
-
-      {/* Top tabs */}
-      <div role="tablist" aria-label="Join or sign in" className="mb-3 inline-flex rounded-xl border border-neutral-800 p-1">
-        <button
-          role="tab"
-          aria-selected={tab === "join"}
-          onClick={() => setTab("join")}
-          className={`px-3 py-1.5 text-sm rounded-lg ${
-            tab === "join" ? "bg-neutral-800" : "hover:bg-neutral-900"
-          }`}
-        >
-          Join
-        </button>
-        <button
-          role="tab"
-          aria-selected={tab === "signin"}
-          onClick={() => setTab("signin")}
-          className={`px-3 py-1.5 text-sm rounded-lg ${
-            tab === "signin" ? "bg-neutral-800" : "hover:bg-neutral-900"
-          }`}
-        >
-          Sign in
-        </button>
-      </div>
-
-      {tab === "join" && <CycleTabs />}
-
-      {/* Alerts */}
-      {info && (
+    <>
+      {/* Sticky summary CTA (mobile) */}
+      {showSticky && (
         <div
-          className="mb-4 rounded border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-blue-200 text-sm"
-          aria-live="polite"
+          className="fixed inset-x-0 bottom-0 z-40 md:hidden border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70"
+          role="region"
+          aria-label="Selected plan summary"
         >
-          {info}
-        </div>
-      )}
-      {checkoutError && (
-        <div
-          className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300 text-sm"
-          aria-live="polite"
-        >
-          {checkoutError}
-        </div>
-      )}
-
-      {/* MAIN */}
-      {tab === "join" ? (
-        <>
-          <div className="grid gap-4 md:grid-cols-2">
-            <PlanCard
-              plan="member"
-              title="Member"
-              features={[
-                "All offers unlocked",
-                "Protect Lite included",
-                "Monthly prize entry",
-                "Digital card",
-              ]}
-              badge="Most popular"
-              accent="member"
-            />
-            <PlanCard
-              plan="pro"
-              title="Pro"
-              features={[
-                "Everything in Member",
-                "Early-access & Pro-only offers",
-                "Double prize entries",
-              ]}
-              accent="pro"
-            />
-          </div>
-
-          {/* Free (Access) path */}
-          <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div className="text-sm text-neutral-300">
-                Prefer to start free? Join with Access to browse and redeem offers. Upgrade any time.
-              </div>
-
-              {!freeOpen ? (
-                <PrimaryButton
-                  onClick={() => {
-                    setFreeOpen(true);
-                    setOpenInline(null); // only one email box at a time
-                    queueMicrotask(() => freeInputRef.current?.focus());
-                  }}
-                  className="self-start md:self-auto"
-                >
-                  Join free
-                </PrimaryButton>
-              ) : (
-                <div className="flex w-full flex-col items-stretch gap-2 md:w-auto md:flex-row">
-                  <label htmlFor="email-access" className="sr-only">
-                    Email address
-                  </label>
-                  <input
-                    id="email-access"
-                    ref={freeInputRef}
-                    type="email"
-                    inputMode="email"
-                    placeholder="you@example.com"
-                    autoComplete="email"
-                    value={emailFree}
-                    onChange={(e) => setEmailFree(e.target.value)}
-                    onKeyDown={onEnter(handleFreeJoin)}
-                    className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500 md:w-64"
-                  />
-                  <PrimaryButton onClick={handleFreeJoin} disabled={busy || sending} className="text-sm">
-                    {sent ? "Link sent ✓" : sending ? "Sending…" : "Email me a link"}
-                  </PrimaryButton>
-                </div>
-              )}
-            </div>
-            <div className="mt-2 text-xs text-neutral-500">
-              No card details needed • You’ll return to /offers after sign-in
-              {openInline && (
-                <span className="ml-2 text-neutral-400">
-                  (We’ll continue to <strong>{openInline}</strong> after you sign in)
-                </span>
-              )}
-            </div>
-          </div>
-        </>
-      ) : (
-        // SIGN IN TAB
-        <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-          <div className="mb-3 text-sm text-neutral-300">
-            Enter your email and we’ll email you a secure sign-in link.
-          </div>
-          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-            <label htmlFor="email-signin" className="sr-only">
-              Email address
-            </label>
-            <input
-              id="email-signin"
-              ref={freeInputRef}
-              type="email"
-              inputMode="email"
-              placeholder="you@example.com"
-              autoComplete="email"
-              value={emailFree}
-              onChange={(e) => setEmailFree(e.target.value)}
-              onKeyDown={onEnter(handleFreeJoin)}
-              className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
-            />
-            <PrimaryButton onClick={handleFreeJoin} disabled={busy || sending}>
-              {sent ? "Link sent ✓" : sending ? "Sending…" : "Email me a link"}
+          <div className="safe-inset-bottom" />
+          <div className="mx-auto max-w-5xl px-4 py-3">
+            <PrimaryButton
+              onClick={() => choose(selectedPlan)}
+              disabled={busy || sending}
+              className="w-full text-base py-3"
+            >
+              {stickyLabel}
             </PrimaryButton>
+            <div className="mt-2 text-center text-[11px] text-neutral-400">
+              {cycle === "year"
+                ? `${fmtMonth(PRICE[selectedPlan].month)} equivalent • ${mFree > 0 ? `${mFree} months free` : "Save vs monthly"}`
+                : `Billed monthly • Cancel any time`}
+            </div>
           </div>
-          <p className="mt-2 text-xs text-neutral-500">
-            You’ll return to /offers after sign-in. If your link has expired or was already used,
-            request a new one.
-          </p>
         </div>
       )}
-    </Container>
+
+      <Container className={showSticky ? "safe-bottom-pad" : ""}>
+        <PageHeader
+          title="Join TradeCard"
+          subtitle={
+            tab === "join"
+              ? "Protection, real trade deals and monthly rewards — start free and upgrade any time."
+              : "Sign in securely with a magic link. No password needed."
+          }
+          aside={
+            tab === "join" && showTrial ? (
+              <span className="promo-chip promo-chip-xs-hide">{TRIAL_COPY}</span>
+            ) : undefined
+          }
+        />
+
+        {/* Top tabs */}
+        <div
+          role="tablist"
+          aria-label="Join or sign in"
+          className="mb-3 inline-flex rounded-xl border border-neutral-800 p-1"
+        >
+          <button
+            role="tab"
+            aria-selected={tab === "join"}
+            onClick={() => setTab("join")}
+            className={`px-3 py-1.5 text-sm rounded-lg ${
+              tab === "join" ? "bg-neutral-800" : "hover:bg-neutral-900"
+            }`}
+          >
+            Join
+          </button>
+          <button
+            role="tab"
+            aria-selected={tab === "signin"}
+            onClick={() => setTab("signin")}
+            className={`px-3 py-1.5 text-sm rounded-lg ${
+              tab === "signin" ? "bg-neutral-800" : "hover:bg-neutral-900"
+            }`}
+          >
+            Sign in
+          </button>
+        </div>
+
+        {tab === "join" && <CycleTabs />}
+
+        {/* Alerts */}
+        {info && (
+          <div
+            className="mb-4 rounded border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-blue-200 text-sm"
+            aria-live="polite"
+          >
+            {info}
+          </div>
+        )}
+        {checkoutError && (
+          <div
+            className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300 text-sm"
+            aria-live="polite"
+          >
+            {checkoutError}
+          </div>
+        )}
+
+        {/* MAIN */}
+        {tab === "join" ? (
+          <>
+            <div className="grid gap-4 md:grid-cols-2">
+              <PlanCard
+                plan="member"
+                title="Member"
+                features={[
+                  "All offers unlocked",
+                  "Protect Lite included",
+                  "Monthly prize entry",
+                  "Digital card",
+                ]}
+                badge="Most popular"
+                accent="member"
+              />
+              <PlanCard
+                plan="pro"
+                title="Pro"
+                features={[
+                  "Everything in Member",
+                  "Early-access & Pro-only offers",
+                  "Double prize entries",
+                ]}
+                accent="pro"
+              />
+            </div>
+
+            {/* Free (Access) path */}
+            <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="text-sm text-neutral-300">
+                  Prefer to start free? Join with Access to browse and redeem offers. Upgrade any time.
+                </div>
+
+                {!freeOpen ? (
+                  <PrimaryButton
+                    onClick={() => {
+                      setFreeOpen(true);
+                      setOpenInline(null); // only one email box at a time
+                      queueMicrotask(() => freeInputRef.current?.focus());
+                    }}
+                    className="self-start md:self-auto"
+                  >
+                    Join free
+                  </PrimaryButton>
+                ) : (
+                  <div className="flex w-full flex-col items-stretch gap-2 md:w-auto md:flex-row">
+                    <label htmlFor="email-access" className="sr-only">
+                      Email address
+                    </label>
+                    <input
+                      id="email-access"
+                      ref={freeInputRef}
+                      type="email"
+                      inputMode="email"
+                      placeholder="you@example.com"
+                      autoComplete="email"
+                      value={emailFree}
+                      onChange={(e) => setEmailFree(e.target.value)}
+                      onKeyDown={onEnter(handleFreeJoin)}
+                      className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500 md:w-64"
+                    />
+                    <PrimaryButton onClick={handleFreeJoin} disabled={busy || sending} className="text-sm">
+                      {sent ? "Link sent ✓" : sending ? "Sending…" : "Email me a link"}
+                    </PrimaryButton>
+                  </div>
+                )}
+              </div>
+              <div className="mt-2 text-xs text-neutral-500">
+                No card details needed • You’ll return to /offers after sign-in
+                {openInline && (
+                  <span className="ml-2 text-neutral-400">
+                    (We’ll continue to <strong>{openInline}</strong> after you sign in)
+                  </span>
+                )}
+              </div>
+            </div>
+          </>
+        ) : (
+          // SIGN IN TAB
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+            <div className="mb-3 text-sm text-neutral-300">
+              Enter your email and we’ll email you a secure sign-in link.
+            </div>
+            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+              <label htmlFor="email-signin" className="sr-only">
+                Email address
+              </label>
+              <input
+                id="email-signin"
+                ref={freeInputRef}
+                type="email"
+                inputMode="email"
+                placeholder="you@example.com"
+                autoComplete="email"
+                value={emailFree}
+                onChange={(e) => setEmailFree(e.target.value)}
+                onKeyDown={onEnter(handleFreeJoin)}
+                className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
+              />
+              <PrimaryButton onClick={handleFreeJoin} disabled={busy || sending}>
+                {sent ? "Link sent ✓" : sending ? "Sending…" : "Email me a link"}
+              </PrimaryButton>
+            </div>
+            <p className="mt-2 text-xs text-neutral-500">
+              You’ll return to /offers after sign-in. If your link has expired or was already used,
+              request a new one.
+            </p>
+          </div>
+        )}
+      </Container>
+    </>
   );
 }

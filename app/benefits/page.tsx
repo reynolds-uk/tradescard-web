@@ -20,9 +20,8 @@ export default function BenefitsPage() {
   const router = useRouter();
 
   const tier: Tier = (me?.tier as Tier) ?? "access";
-  const isPaid =
-    (tier === "member" || tier === "pro") &&
-    (me?.status === "active" || me?.status === "trialing");
+  const isPaidTier = tier === "member" || tier === "pro";
+  const isPaid = isPaidTier && (me?.status === "active" || me?.status === "trialing");
   const showTrial = shouldShowTrial(me);
 
   // Redirect paid users to their member experience
@@ -30,6 +29,7 @@ export default function BenefitsPage() {
     if (ready && isPaid) router.replace("/member/benefits");
   }, [ready, isPaid, router]);
 
+  // While redirecting, keep UX calm
   if (ready && isPaid) {
     return (
       <Container>
@@ -39,10 +39,17 @@ export default function BenefitsPage() {
   }
 
   // Logged out / Access: promotional view
+  const showSticky = true; // always show bottom CTA on public view
+
   return (
     <>
-      {/* Mobile sticky CTA */}
-      <div className="md:hidden fixed inset-x-0 bottom-0 z-40 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70">
+      {/* Mobile sticky CTA with iOS safe-area clearance */}
+      <div
+        className="md:hidden fixed inset-x-0 bottom-0 z-40 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70"
+        role="region"
+        aria-label="Unlock included benefits"
+      >
+        <div className="safe-inset-bottom" />
         <div className="mx-auto max-w-5xl px-4 py-3 flex items-center justify-between gap-2">
           <div className="text-xs text-neutral-300">Unlock included benefits</div>
           <PrimaryButton
@@ -54,10 +61,10 @@ export default function BenefitsPage() {
         </div>
       </div>
 
-      <Container className="pb-20 md:pb-10">
+      <Container className={showSticky ? "safe-bottom-pad md:pb-10" : "pb-10"}>
         <PageHeader
           title="Member Benefits"
-          subtitle="Practical inclusions and exclusive pricing for paid members. Start with Member — upgrade to Pro any time."
+          subtitle="Built for busy trades — get protection, rewards and exclusive pricing from day one."
           aside={
             showTrial ? (
               <span className="hidden sm:inline rounded bg-amber-400/20 text-amber-200 text-xs px-2 py-1 border border-amber-400/30">
@@ -67,17 +74,20 @@ export default function BenefitsPage() {
           }
         />
 
-        {/* How it works */}
-        <section className="mb-5 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4">
-          <ol className="list-decimal pl-5 text-sm text-neutral-300 space-y-1">
-            <li>Join as <span className="text-neutral-100 font-medium">Member</span> or <span className="text-neutral-100 font-medium">Pro</span>.</li>
+        {/* How it works (compact, mobile-friendly) */}
+        <section className="mb-5 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 text-sm leading-snug md:text-base">
+          <ol className="list-decimal pl-5 text-neutral-300 space-y-1">
+            <li>
+              Join as <span className="text-neutral-100 font-medium">Member</span> or{" "}
+              <span className="text-neutral-100 font-medium">Pro</span>.
+            </li>
             <li>Access included benefits straight away in the app.</li>
             <li>Get exclusive member-only pricing with selected partners.</li>
             <li>Upgrade to Pro for early access and extra perks as they land.</li>
           </ol>
         </section>
 
-        {/* Benefits grid (short, high-signal list) */}
+        {/* Benefits grid */}
         <section className="grid gap-3 md:grid-cols-3">
           <BenefitCard
             title="Protect Lite (included)"
@@ -111,7 +121,8 @@ export default function BenefitsPage() {
         {/* CTA strip */}
         <section className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm text-neutral-300">
-            Ready to unlock benefits? Start with <span className="text-neutral-100">Member</span> or go <span className="text-neutral-100">Pro</span>.
+            Ready to unlock benefits? Start with <span className="text-neutral-100">Member</span>{" "}
+            or go <span className="text-neutral-100">Pro</span>.
           </div>
           <div className="flex gap-2">
             <PrimaryButton onClick={() => routeToJoin("member")}>

@@ -165,3 +165,22 @@ body { @apply bg-neutral-950 text-neutral-100 antialiased; }
    ========================= */
 .bg-app   { background-color: var(--bg); }
 .bg-panel { background-color: var(--panel); }
+
+/* =========================
+   Mobile / iOS safe-area helpers
+   ========================= */
+
+/* Reserve space for any fixed bottom bar (e.g. join CTA) */
+.safe-bottom-pad {
+  padding-bottom: max(5rem, env(safe-area-inset-bottom));
+}
+
+/* Inside the fixed bar, add padding for iOS Home indicator */
+.safe-inset-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* If you use in-page anchors or scroll-to, avoid being covered by the bar */
+html, body {
+  scroll-padding-bottom: 6rem;
+}
