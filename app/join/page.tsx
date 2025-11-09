@@ -262,7 +262,7 @@ export default function JoinPage() {
       await sendMagicLink(emailPaid, "/join"); // return here so we can resume checkout
       setSent(true);
       setInfo(`Link sent. After you sign in, we’ll continue to ${openInline} (${cycle}).`);
-      track("join_free_click"); // simple reuse for “send link”
+      track("join_free_click"); // reuse event for "send link"
     } catch (e) {
       setSent(false);
       setInfo(
@@ -390,24 +390,30 @@ export default function JoinPage() {
         ? `Choose Member – ${price}`
         : `Choose Pro – ${price}`;
 
+    // Only select via the explicit radio, not the whole card (prevents input blur)
+    const selectThisPlan = () => {
+      if (!selected) setSelectedPlan(plan);
+    };
+
+    // Prevent bubbling from inputs to any parent handlers
+    const stop = (e: any) => e.stopPropagation();
+
     return (
-      <div
-        className={`rounded-2xl border ${accentCls} bg-neutral-900 p-4`}
-        onClick={() => setSelectedPlan(plan)}
-        role="button"
-        aria-pressed={selected}
-      >
+      <div className={`rounded-2xl border ${accentCls} bg-neutral-900 p-4`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span
-              className={`inline-block h-4 w-4 rounded-full border ${
+            {/* Radio-like control */}
+            <button
+              type="button"
+              aria-pressed={selected}
+              aria-label={`Select ${title}`}
+              onClick={selectThisPlan}
+              className={`relative inline-flex h-5 w-5 items-center justify-center rounded-full border ${
                 selected ? "border-white" : "border-neutral-500"
-              } relative`}
+              }`}
             >
-              {selected && (
-                <span className="absolute inset-0 m-[3px] block rounded-full bg-white" />
-              )}
-            </span>
+              {selected && <span className="block h-3.5 w-3.5 rounded-full bg-white" />}
+            </button>
             <div className="text-lg font-semibold">{title}</div>
           </div>
           <div className="flex items-center gap-2">
@@ -449,9 +455,13 @@ export default function JoinPage() {
               inputMode="email"
               placeholder="you@example.com"
               autoComplete="email"
+              autoFocus
               value={emailPaid}
               onChange={(e) => setEmailPaid(e.target.value)}
               onKeyDown={onEnter(handlePaidLink)}
+              onClick={stop}
+              onFocus={stop}
+              onMouseDown={stop}
               className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
             />
             <PrimaryButton onClick={handlePaidLink} disabled={busy || sending}>
@@ -489,7 +499,9 @@ export default function JoinPage() {
             </PrimaryButton>
             <div className="mt-2 text-center text-[11px] text-neutral-400">
               {cycle === "year"
-                ? `${fmtMonth(PRICE[selectedPlan].month)} equivalent • ${mFree > 0 ? `${mFree} months free` : "Save vs monthly"}`
+                ? `${fmtMonth(PRICE[selectedPlan].month)} equivalent • ${
+                    mFree > 0 ? `${mFree} months free` : "Save vs monthly"
+                  }`
                 : `Billed monthly • Cancel any time`}
             </div>
           </div>
