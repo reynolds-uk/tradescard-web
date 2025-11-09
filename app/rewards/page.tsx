@@ -1,77 +1,20 @@
 // app/rewards/page.tsx
 "use client";
 
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
-
+import { useEffect, useMemo, useState } from "react";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import PrimaryButton from "@/components/PrimaryButton";
-import { routeToJoin } from "@/lib/routeToJoin";
 import { useMe } from "@/lib/useMe";
 import { useMeReady } from "@/lib/useMeReady";
+import { routeToJoin } from "@/lib/routeToJoin";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 
 type Tier = "access" | "member" | "pro";
 
-/* ----------------------------------------------------------------------------
-   Placeholder data (wire to DB later)
----------------------------------------------------------------------------- */
-type Competition = {
-  slug: string;
-  tag: "Current" | "Featured" | "Lifetime";
-  title: string;
-  copy: string;
-  prizeLine?: string;
-  starts: string; // ISO
-  ends: string;   // ISO
-  freeRouteUrl?: string;
-  highlight?: boolean; // style accent
-};
-
-const COMPETITIONS: Competition[] = [
-  {
-    slug: "tool-bundle-500",
-    tag: "Featured",
-    title: "Trade tool bundle worth £500",
-    prizeLine: "One winner • RRP ~£500",
-    copy:
-      "Our featured time-boxed draw. Active Members and Pro are auto-entered based on their monthly allocation. Free postal route available.",
-    starts: "2025-11-01",
-    ends: "2025-11-30",
-    freeRouteUrl: "/promos/tool-bundle-500",
-    highlight: true,
-  },
-  {
-    slug: "lifetime-tier-points",
-    tag: "Lifetime",
-    title: "Lifetime Tier Points Draw",
-    prizeLine: "Points-weighted draw • 1 winner",
-    copy:
-      "Entries are weighted by your lifetime Tier Points. You must be an active Member or Pro at the time of the draw to claim. Free postal route available.",
-    starts: "2025-11-01",
-    ends: "2025-11-30",
-    freeRouteUrl: "/promos/lifetime-tier-points",
-  },
-];
-
-/* Small helpers */
-function niceDate(iso: string) {
-  try {
-    return new Date(iso + "T00:00:00").toLocaleDateString(undefined, {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
-  } catch {
-    return iso;
-  }
-}
-
 export default function RewardsPage() {
   const me = useMe();
   const ready = useMeReady();
-  const router = useRouter();
 
   const tier: Tier = (me?.tier as Tier) ?? "access";
   const isPaid =
@@ -80,201 +23,250 @@ export default function RewardsPage() {
 
   const showTrial = shouldShowTrial(me);
 
-  // Paid users go to member view
+  // If a paid user lands here, take them to the member experience.
   useEffect(() => {
-    if (ready && isPaid) router.replace("/member/rewards");
-  }, [ready, isPaid, router]);
+    if (!ready || !isPaid) return;
+    // Soft client-side redirect without flashing content
+    window.location.replace("/member/rewards");
+  }, [ready, isPaid]);
 
-  if (ready && isPaid) {
-    return (
-      <Container>
-        <PageHeader title="Rewards" subtitle="Taking you to your rewards…" />
-      </Container>
-    );
-  }
+  const subtitle = useMemo(() => {
+    if (!ready) return "Loading…";
+    return "Two ongoing prize draws: a time-bound headline prize and a lifetime-points prize. Join as a paid member to start earning entries — or use the free postal route.";
+  }, [ready]);
+
+  // Postal modal
+  const [openPostal, setOpenPostal] = useState(false);
+
+  // Competition fixtures (static placeholders for now; move to DB later)
+  const now = new Date();
+  const mainCloses = new Date(now.getFullYear(), now.getMonth() + 1, 1); // next month start
+  const lifetimeCloses = new Date(now.getFullYear(), 11, 31); // end of year
 
   return (
-    <>
-      {/* Mobile sticky CTA */}
-      <div className="md:hidden fixed inset-x-0 bottom-0 z-40 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70">
-        <div className="mx-auto max-w-5xl px-4 py-3 flex items-center justify-between gap-2">
-          <div className="text-xs text-neutral-300">Start earning entries</div>
-          <PrimaryButton
+    <Container>
+      <PageHeader
+        title="Rewards"
+        subtitle={subtitle}
+        aside={
+          !isPaid && showTrial ? (
+            <span className="hidden sm:inline rounded bg-amber-400/20 text-amber-200 text-xs px-2 py-1 border border-amber-400/30">
+              {TRIAL_COPY}
+            </span>
+          ) : undefined
+        }
+      />
+
+      {/* Hero blurb */}
+      <div className="mb-5 rounded-2xl border border-neutral-800 bg-neutral-900 p-4 text-sm text-neutral-300">
+        Earn points automatically each month on **Member** or **Pro**. Points convert to entries for the prize draws below.
+        You can cancel any time. A free **postal entry** route is also available.
+      </div>
+
+      {/* Competitions */}
+      <div className="grid gap-4 md:grid-cols-2">
+        <CompCard
+          tone="primary"
+          title="Current Prize"
+          kicker="Time-bound draw"
+          headline="Win a £1,000 Trade Bundle"
+          copy="Tools, fuel and food credits to keep your month moving."
+          closes={mainCloses}
+          ctaLabel={showTrial ? TRIAL_COPY : "Become a Member"}
+          onJoin={() => routeToJoin("member")}
+          onPostal={() => setOpenPostal(true)}
+          bullets={[
+            "Entries earned monthly while subscribed",
+            "1× base entries on Member, 1.5× on Pro",
+            "No purchase necessary (postal entry available)",
+          ]}
+        />
+
+        <CompCard
+          tone="amber"
+          title="Lifetime Points Prize"
+          kicker="Ongoing draw"
+          headline="Win a Weekend Away"
+          copy="Every lifetime point you earn is an entry. Active members can win."
+          closes={lifetimeCloses}
+          ctaLabel={showTrial ? TRIAL_COPY : "Go Pro for Boosted Entries"}
+          onJoin={() => routeToJoin("pro")}
+          onPostal={() => setOpenPostal(true)}
+          bullets={[
+            "Entries accumulate over time with your subscription",
+            "Member: 1.25× points • Pro: 1.5× points",
+            "Postal entry route available for each draw period",
+          ]}
+        />
+      </div>
+
+      {/* Plans teaser */}
+      <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900/70 p-4">
+        <div className="grid items-center gap-3 md:grid-cols-[1fr_auto_auto]">
+          <div className="text-sm text-neutral-300">
+            Choose a plan to start earning entries automatically each month.
+          </div>
+          <button
             onClick={() => routeToJoin("member")}
-            className="text-xs px-3 py-1.5"
+            className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800"
           >
-            {showTrial ? TRIAL_COPY : "Become a Member"}
+            Join Member
+          </button>
+          <PrimaryButton onClick={() => routeToJoin("pro")} className="text-sm">
+            Go Pro
           </PrimaryButton>
         </div>
       </div>
 
-      <Container className="pb-20 md:pb-10">
-        <PageHeader
-          title="Rewards"
-          subtitle="Two live competitions. Join as a paid member to earn entries automatically, or use the free postal route on each promo page."
-          aside={
-            showTrial ? (
-              <span className="hidden sm:inline rounded bg-amber-400/20 text-amber-200 text-xs px-2 py-1 border border-amber-400/30">
-                {TRIAL_COPY}
-              </span>
-            ) : undefined
-          }
-        />
+      {/* FAQ */}
+      <div className="mt-8">
+        <h2 className="mb-3 text-lg font-semibold">FAQs</h2>
+        <div className="divide-y divide-neutral-800 rounded-2xl border border-neutral-800">
+          <Faq
+            q="How do I get entries?"
+            a="Entries come from points you earn each month while subscribed. Member earns base points with a 1.25× tier boost; Pro earns a 1.5× boost. Points convert into draw entries at the end of the month."
+          />
+          <Faq
+            q="Do I need to buy anything to enter?"
+            a="No. Every draw includes a free postal entry route. See “Postal entry” on this page for instructions."
+          />
+          <Faq
+            q="Can I cancel any time?"
+            a="Yes. You can cancel your membership any time from Manage billing. You’ll keep any entries you’ve already earned for the relevant draw period."
+          />
+          <Faq
+            q="Is there a limit to entries?"
+            a="Entries from points are based on your plan and activity. We may also run capped ‘flash’ boosts from time to time — details will always be listed in the draw rules."
+          />
+        </div>
+      </div>
 
-        {/* Current competitions */}
-        <section className="mb-5">
-          <h2 className="mb-3 text-base font-semibold">Current competitions</h2>
-          <div className="grid gap-3 md:grid-cols-2">
-            {COMPETITIONS.map((c) => (
-              <CompetitionCard
-                key={c.slug}
-                c={c}
-                onMember={() => routeToJoin("member")}
-                onPro={() => routeToJoin("pro")}
-                trialCopy={showTrial ? TRIAL_COPY : undefined}
-              />
-            ))}
+      {/* Postal entry modal */}
+      {openPostal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+          onClick={() => setOpenPostal(false)}
+        >
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div
+            className="relative z-10 w-full sm:w-[520px] rounded-t-2xl sm:rounded-2xl border border-neutral-800 bg-neutral-950 p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-base font-semibold">Postal entry (free route)</div>
+              <button
+                onClick={() => setOpenPostal(false)}
+                className="rounded px-2 py-1 text-sm text-neutral-300 hover:bg-neutral-800"
+                aria-label="Close"
+              >
+                Close
+              </button>
+            </div>
+            <p className="text-sm text-neutral-300">
+              You can enter any TradeCard prize draw without purchase by post. Maximum one
+              entry per postcard for each draw period. Write clearly:
+            </p>
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-neutral-300">
+              <li>Full name and postal address (no PO Boxes)</li>
+              <li>Email address and phone number (optional)</li>
+              <li>The specific TradeCard prize draw you wish to enter</li>
+            </ul>
+            <p className="mt-2 text-sm text-neutral-400">
+              Send to: <span className="text-neutral-200">TradeCard Prize Draws, PO Box 12345, London, EC1A 1AA</span>.
+              By entering, you accept the draw Terms and Rules published on this site.
+            </p>
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <button
+                onClick={() => setOpenPostal(false)}
+                className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800"
+              >
+                Done
+              </button>
+              <PrimaryButton onClick={() => routeToJoin("member")} className="text-sm">
+                {showTrial ? TRIAL_COPY : "Start membership"}
+              </PrimaryButton>
+            </div>
           </div>
-        </section>
-
-        {/* How it works */}
-        <section className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4">
-          <h3 className="mb-2 text-sm font-semibold">How it works</h3>
-          <ol className="list-decimal pl-5 text-sm text-neutral-300 space-y-1">
-            <li>Join as <span className="text-neutral-100 font-medium">Member</span> or <span className="text-neutral-100 font-medium">Pro</span>.</li>
-            <li>While active, you automatically receive entries for current competitions.</li>
-            <li>Pro may receive boosted allocations and early access on selected draws.</li>
-            <li>Prefer not to join? Each promo page explains the free postal entry route.</li>
-          </ol>
-        </section>
-
-        {/* CTA strip */}
-        <section className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-sm text-neutral-300">
-            Ready to enter? Become a <span className="text-neutral-100">Member</span> or go <span className="text-neutral-100">Pro</span>.
-          </div>
-          <div className="flex gap-2">
-            <PrimaryButton onClick={() => routeToJoin("member")}>
-              {showTrial ? TRIAL_COPY : "Become a Member"}
-            </PrimaryButton>
-            <button
-              onClick={() => routeToJoin("pro")}
-              className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800"
-            >
-              Go Pro
-            </button>
-          </div>
-        </section>
-
-        {/* Transparency / compliance */}
-        <section className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4">
-          <p className="text-xs text-neutral-400">
-            Each competition has published terms, eligibility and a free entry route.
-            Winners are selected at random and contacted by email. You must be an active
-            paid member at the time of the draw to claim a member-awarded prize. We
-            publish winner confirmations (first name, town) on the promo page once verified.
-          </p>
-        </section>
-
-        {/* FAQ */}
-        <section className="mt-6">
-          <h2 className="mb-3 text-base font-semibold">FAQs</h2>
-          <div className="grid gap-3 md:grid-cols-2">
-            <Faq
-              q="Do I have to be a paying member to enter?"
-              a="No. Every competition has a free postal route. However, member entries are automatic while your membership is active."
-            />
-            <Faq
-              q="What is the Lifetime Tier Points draw?"
-              a="It’s a competition where entries are weighted by your lifetime Tier Points. You must be an active member at the time of the draw to claim a prize."
-            />
-            <Faq
-              q="How are winners selected?"
-              a="Randomly, in line with the published terms for each competition. We contact winners by email and publish a confirmation on the promo page."
-            />
-            <Faq
-              q="What’s different with Pro?"
-              a="Pro may receive occasional entry boosts and earlier access to selected draws. Details are always listed on each promo page."
-            />
-          </div>
-        </section>
-      </Container>
-    </>
+        </div>
+      )}
+    </Container>
   );
 }
 
-/* ----------------------------------------------------------------------------
-   Components (kept local to avoid extra files)
----------------------------------------------------------------------------- */
-function CompetitionCard({
-  c,
-  onMember,
-  onPro,
-  trialCopy,
-}: {
-  c: {
-    slug: string;
-    tag: "Current" | "Featured" | "Lifetime";
-    title: string;
-    copy: string;
-    prizeLine?: string;
-    starts: string;
-    ends: string;
-    freeRouteUrl?: string;
-    highlight?: boolean;
-  };
-  onMember: () => void;
-  onPro: () => void;
-  trialCopy?: string;
+/* ----------------------------- helpers ----------------------------- */
+
+function CompCard(props: {
+  tone?: "primary" | "amber";
+  title: string;
+  kicker: string;
+  headline: string;
+  copy: string;
+  bullets: string[];
+  closes: Date;
+  ctaLabel: string;
+  onJoin: () => void;
+  onPostal: () => void;
 }) {
-  const accent =
-    c.highlight || c.tag === "Featured" ? "border-amber-400/30 ring-1 ring-amber-400/20" : "border-neutral-800";
+  const { tone = "primary", title, kicker, headline, copy, bullets, closes, ctaLabel, onJoin, onPostal } =
+    props;
+
+  const border =
+    tone === "amber"
+      ? "border-amber-400/30 ring-1 ring-amber-400/15"
+      : "border-neutral-800";
+
+  const dateStr = closes.toLocaleDateString("en-GB", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+  });
 
   return (
-    <div className={`rounded-2xl border bg-neutral-900 p-5 flex flex-col gap-3 ${accent}`}>
-      <div className="flex items-center justify-between">
-        <h3 className="text-base font-semibold">{c.title}</h3>
-        <span className="rounded-full border border-neutral-700 bg-neutral-800/60 px-2 py-0.5 text-[11px] text-neutral-300">
-          {c.tag}
+    <div className={`rounded-2xl ${border} bg-neutral-900 p-4`}>
+      <div className="mb-1 flex items-center justify-between">
+        <div className="text-sm text-neutral-300">{title}</div>
+        <span className="rounded-full border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300">
+          {kicker}
         </span>
       </div>
-      {c.prizeLine && <div className="text-sm text-neutral-300">{c.prizeLine}</div>}
-      <p className="text-sm text-neutral-300">{c.copy}</p>
-      <div className="text-xs text-neutral-400">
-        Opens <span className="text-neutral-200">{niceDate(c.starts)}</span> ·
-        Closes <span className="text-neutral-200">{niceDate(c.ends)}</span>
-      </div>
+      <div className="text-lg font-semibold leading-snug">{headline}</div>
+      <p className="mt-1 text-sm text-neutral-300">{copy}</p>
 
-      <div className="mt-1 flex flex-wrap gap-2">
-        <PrimaryButton onClick={onMember}>
-          {trialCopy ? trialCopy : "Become a Member"}
-        </PrimaryButton>
+      <ul className="mt-3 space-y-1 text-sm text-neutral-300">
+        {bullets.map((b) => (
+          <li key={b}>• {b}</li>
+        ))}
+      </ul>
+
+      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <PrimaryButton onClick={onJoin}>{ctaLabel}</PrimaryButton>
         <button
-          onClick={onPro}
+          onClick={onPostal}
           className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800"
         >
-          Go Pro
+          Postal entry (free)
         </button>
-        {c.freeRouteUrl && (
-          <a
-            href={c.freeRouteUrl}
-            className="text-sm text-neutral-300 underline underline-offset-4 hover:text-white"
-          >
-            Free postal entry route
-          </a>
-        )}
       </div>
+
+      <div className="mt-2 text-xs text-neutral-500">Closes: {dateStr}</div>
     </div>
   );
 }
 
 function Faq({ q, a }: { q: string; a: string }) {
   return (
-    <details className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
-      <summary className="cursor-pointer select-none text-sm font-medium text-neutral-100">
-        {q}
+    <details className="group">
+      <summary className="cursor-pointer list-none px-4 py-3 text-sm">
+        <span className="mr-2 inline-block rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300">
+          Q
+        </span>
+        <span className="align-middle">{q}</span>
+        <span className="float-right text-neutral-500 group-open:hidden">+</span>
+        <span className="float-right hidden text-neutral-500 group-open:inline">–</span>
       </summary>
-      <p className="mt-2 text-sm text-neutral-300">{a}</p>
+      <div className="px-4 pb-4 text-sm text-neutral-300">{a}</div>
     </details>
   );
 }
