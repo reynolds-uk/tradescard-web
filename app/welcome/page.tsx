@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
@@ -13,7 +13,6 @@ import { track } from "@/lib/track";
 
 // Shared data hooks
 import { useSessionUser, useProfile, useMember } from "@/lib/data";
-// Extracted overlay
 import ActivateEmailOverlay from "@/components/ActivateEmailOverlay";
 
 type Tier = "access" | "member" | "pro";
@@ -36,12 +35,10 @@ const TIER_COPY: Record<Tier, { label: string; blurb: string }> = {
   },
 };
 
-const APP_URL =
-  process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
-
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_API_BASE ||
+  process.env.NEXT_PUBLIC_API_URL ??
+  process.env.NEXT_PUBLIC_API_BASE ??
   "https://tradescard-api.vercel.app";
 
 export default function WelcomePage() {
@@ -65,9 +62,8 @@ export default function WelcomePage() {
     []
   );
 
-  // Form state
+  // Form state (schema has no phone column)
   const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
   const [saving, setSaving] = useState(false);
   const [savedOnce, setSavedOnce] = useState(false);
   const [error, setError] = useState("");
@@ -86,7 +82,6 @@ export default function WelcomePage() {
   useEffect(() => {
     if (!profile) return;
     setName(profile.name ?? "");
-    setPhone((profile as any).phone ?? "");
   }, [profile]);
 
   const maskedId = (id?: string) => (id ? `${id.slice(0, 6)}…${id.slice(-4)}` : "—");
@@ -108,20 +103,13 @@ export default function WelcomePage() {
     } catch {}
   }
 
-  // Lenient phone validator
-  const isValidPhone = (v: string) => /^(\+?\d{10,15})$/.test(v.replace(/[\s\-\(\)]/g, ""));
-
   async function saveAndContinue() {
     if (!userId) return;
 
     setError("");
-    if ((tier === "member" || tier === "pro") && !isValidPhone(phone)) {
-      setError("Please enter a valid phone number so we can contact you about rewards.");
-      return;
-    }
-
     setSaving(true);
     try {
+      // Only touch the columns that exist
       const { error: upErr } = await supabase
         .from("profiles")
         .upsert(
@@ -129,7 +117,6 @@ export default function WelcomePage() {
             user_id: userId,
             email: profile?.email ?? null,
             name: name || null,
-            phone: phone || null,
             updated_at: new Date().toISOString(),
           },
           { onConflict: "user_id" }
@@ -138,7 +125,7 @@ export default function WelcomePage() {
       if (upErr) throw upErr;
 
       setSavedOnce(true);
-      track("welcome_profile_saved", { tier, has_phone: !!phone });
+      track("welcome_profile_saved", { tier });
 
       window.location.href = tier === "access" ? "/offers" : "/account";
     } catch (e: any) {
@@ -153,11 +140,11 @@ export default function WelcomePage() {
     window.location.href = tier === "access" ? "/offers" : "/account";
   }
 
-  // Handle checkout return → activation (only if not already signed in)
+  // Handle checkout return → show activation overlay and send first magic link
   useEffect(() => {
     const sessionId = params.get("session_id");
     const pending = params.get("pending") === "1";
-    if (!sessionId || !pending || userId) return;
+    if (!sessionId || !pending || userId) return; // only for not-signed-in return
 
     (async () => {
       try {
@@ -191,6 +178,30 @@ export default function WelcomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params, userId]);
 
+  // After the user signs in (overlay goes away), finalise Stripe→Supabase link (idempotent)
+  const finalisedRef = useRef(false);
+  useEffect(() => {
+    if (finalisedRef.current) return;
+    const sessionId = params.get("session_id");
+    const pending = params.get("pending") === "1";
+    if (!userId || !sessionId || !pending) return;
+
+    finalisedRef.current = true;
+    (async () => {
+      try {
+        await fetch(`${API_BASE}/api/link-subscription-by-email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: userId, session_id: sessionId }),
+        });
+        // UI will naturally re-render as hooks refetch (or on focus)
+      } catch {
+        // non-blocking; user still signed in as ACCESS until next refetch
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, params]);
+
   // Cooldown tick
   useEffect(() => {
     if (countdown <= 0) return;
@@ -210,7 +221,6 @@ export default function WelcomePage() {
       });
       if (otpErr) throw otpErr;
     } catch {
-      // let them try again if it failed
       setCountdown(0);
     } finally {
       setResending(false);
@@ -235,7 +245,7 @@ export default function WelcomePage() {
     <>
       {showActivationOverlay && pendingEmail && (
         <ActivateEmailOverlay
-          email={pendingEmail!}
+          email={pendingEmail}
           info={pendingInfo}
           onResend={resend}
           canResend={canResend}
@@ -280,7 +290,9 @@ export default function WelcomePage() {
                 </div>
 
                 <div className="rounded-lg border border-neutral-800 p-3 text-center">
-                  <div className="text-xl font-semibold truncate">{maskedId(userId ?? undefined)}</div>
+                  <div className="text-xl font-semibold truncate">
+                    {maskedId(userId ?? undefined)}
+                  </div>
                   <div className="mt-1 text-xs text-neutral-400">Card ID</div>
                 </div>
 
@@ -357,7 +369,7 @@ export default function WelcomePage() {
           )}
 
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <div>
+            <div className="sm:col-span-2">
               <label htmlFor="name" className="block text-xs text-neutral-400 mb-1">
                 Your name <span className="text-neutral-500">(optional)</span>
               </label>
@@ -369,26 +381,6 @@ export default function WelcomePage() {
                 onChange={(e) => setName(e.target.value)}
                 className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
                 placeholder="e.g. Alex Smith"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="phone" className="block text-xs text-neutral-400 mb-1">
-                Mobile number{" "}
-                {tier === "member" || tier === "pro" ? (
-                  <span className="text-amber-300">(required for paid)</span>
-                ) : (
-                  <span className="text-neutral-500">(optional)</span>
-                )}
-              </label>
-              <input
-                id="phone"
-                type="tel"
-                inputMode="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
-                placeholder="+44 7700 900123"
               />
             </div>
           </div>
