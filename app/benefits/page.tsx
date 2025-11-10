@@ -1,7 +1,7 @@
 // app/benefits/page.tsx
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import PrimaryButton from "@/components/PrimaryButton";
@@ -13,6 +13,8 @@ import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 import TierGate from "@/components/TierGate";
 
 type Tier = "access" | "member" | "pro";
+type AppStatus = "free" | "trial" | "paid" | "inactive";
+const isActiveStatus = (s?: string) => s === "paid" || s === "trial";
 
 export default function BenefitsPage() {
   // Auth / membership
@@ -21,9 +23,10 @@ export default function BenefitsPage() {
   const router = useRouter();
 
   const tier: Tier = (me?.tier as Tier) ?? "access";
+  const status: AppStatus = (me?.status as AppStatus) ?? "free";
+
   const isPaidTier = tier === "member" || tier === "pro";
-  const isPaid =
-    isPaidTier && (me?.status === "active" || me?.status === "trialing");
+  const isPaid = isPaidTier && isActiveStatus(status);
 
   const showTrial = shouldShowTrial(me);
 
@@ -31,8 +34,7 @@ export default function BenefitsPage() {
   useEffect(() => {
     if (!ready) return;
     if (isPaid) router.replace("/member/benefits");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, isPaid]);
+  }, [ready, isPaid, router]);
 
   // While redirecting, keep UX calm
   if (ready && isPaid) {
@@ -44,7 +46,7 @@ export default function BenefitsPage() {
   }
 
   // Public view (logged out or Access)
-  const showSticky = ready && !isPaid;
+  const showSticky = useMemo(() => ready && !isPaid, [ready, isPaid]);
 
   return (
     <>
@@ -61,6 +63,7 @@ export default function BenefitsPage() {
             <PrimaryButton
               onClick={() => routeToJoin("member")}
               className="text-xs px-3 py-1.5"
+              aria-label="Join as Member to unlock benefits"
             >
               {showTrial ? TRIAL_COPY : "Become a Member"}
             </PrimaryButton>
@@ -74,7 +77,10 @@ export default function BenefitsPage() {
           subtitle="Built for busy trades — get protection, rewards and exclusive pricing from day one."
           aside={
             !isPaid && showTrial ? (
-              <span className="hidden sm:inline rounded bg-amber-400/20 text-amber-200 text-xs px-2 py-1 border border-amber-400/30">
+              <span
+                className="hidden sm:inline rounded bg-amber-400/20 text-amber-200 text-xs px-2 py-1 border border-amber-400/30"
+                aria-live="polite"
+              >
                 {TRIAL_COPY}
               </span>
             ) : undefined
@@ -82,7 +88,11 @@ export default function BenefitsPage() {
         />
 
         {/* How it works (compact, mobile-friendly) */}
-        <section className="mb-5 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 text-sm leading-snug md:text-base">
+        <section
+          className="mb-5 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 text-sm leading-snug md:text-base"
+          aria-labelledby="how-it-works"
+        >
+          <h2 id="how-it-works" className="sr-only">How it works</h2>
           <ol className="list-decimal pl-5 text-neutral-300 space-y-1">
             <li>
               Join <span className="text-neutral-100 font-medium">Member</span> or{" "}
@@ -94,42 +104,55 @@ export default function BenefitsPage() {
           </ol>
         </section>
 
-        {/* Benefits grid */}
-<TierGate gate="paid" title="Members only" blurb="Join to unlock benefits and member-only pricing.">
-  <section className="grid gap-3 md:grid-cols-3">
-    <BenefitCard
-      title="Protect Lite (included)"
-      lines={[
-        "Purchase protection on eligible redemptions",
-        "Dispute help if things go wrong",
-        "Simple claims via the app",
-      ]}
-      tag="Included with Member"
-    />
-    <BenefitCard
-      title="Priority support"
-      lines={[
-        "Faster responses when you need us",
-        "Email + in-app priority routing",
-      ]}
-      tag="Included with Member"
-    />
-    <BenefitCard
-      title="Exclusive pricing"
-      lines={[
-        "Lower rates with selected partners",
-        "Tools, fuel, food & business essentials",
-        "New partners added regularly",
-      ]}
-      tag="Member & Pro pricing"
-      accent
-    />
-  </section>
-</TierGate>
+        {/* Benefits grid (gated) */}
+        <TierGate
+          gate="paid"
+          title="Members only"
+          blurb="Join to unlock benefits and member-only pricing."
+        >
+          <section
+            className="grid gap-3 md:grid-cols-3"
+            aria-labelledby="included-benefits"
+          >
+            <h2 id="included-benefits" className="sr-only">Included benefits</h2>
+
+            <BenefitCard
+              title="Protect Lite (included)"
+              lines={[
+                "Purchase protection on eligible redemptions",
+                "Dispute help if things go wrong",
+                "Simple claims via the app",
+              ]}
+              tag="Included with Member"
+            />
+
+            <BenefitCard
+              title="Priority support"
+              lines={[
+                "Faster responses when you need us",
+                "Email + in-app priority routing",
+              ]}
+              tag="Included with Member"
+            />
+
+            <BenefitCard
+              title="Exclusive pricing"
+              lines={[
+                "Lower rates with selected partners",
+                "Tools, fuel, food & business essentials",
+                "New partners added regularly",
+              ]}
+              tag="Member & Pro pricing"
+              accent
+            />
+          </section>
+        </TierGate>
 
         {/* FAQ */}
-        <section className="mt-6">
-          <h2 className="mb-3 text-base font-semibold">Frequently asked</h2>
+        <section className="mt-6" aria-labelledby="benefits-faq">
+          <h2 id="benefits-faq" className="mb-3 text-base font-semibold">
+            Frequently asked
+          </h2>
           <div className="grid gap-3 md:grid-cols-2">
             <Faq
               q="What’s the difference between Member and Pro?"
@@ -170,11 +193,12 @@ function BenefitCard({
   accent?: boolean;
 }) {
   return (
-    <div
+    <article
       className={[
         "rounded-2xl border p-5 bg-neutral-900",
         accent ? "border-amber-400/30 ring-1 ring-amber-400/20" : "border-neutral-800",
       ].join(" ")}
+      aria-label={title}
     >
       <div className="mb-1 flex items-center justify-between">
         <h3 className="text-base font-semibold">{title}</h3>
@@ -190,7 +214,7 @@ function BenefitCard({
         ))}
       </ul>
       <div className="mt-3 text-xs text-neutral-500">Paid members only</div>
-    </div>
+    </article>
   );
 }
 

@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import PrimaryButton from "@/components/PrimaryButton";
@@ -10,29 +11,39 @@ import { useMeReady } from "@/lib/useMeReady";
 import { routeToJoin } from "@/lib/routeToJoin";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 
+// If you created lib/status.ts, use these imports instead:
+// import { AppStatus, isActiveStatus } from "@/lib/status";
+
 type Tier = "access" | "member" | "pro";
+type AppStatus = "free" | "trial" | "paid" | "inactive";
+const isActiveStatus = (s?: string) => s === "paid" || s === "trial";
 
 export default function RewardsPage() {
+  const router = useRouter();
   const me = useMe();
   const ready = useMeReady();
 
   const tier: Tier = (me?.tier as Tier) ?? "access";
-  const isPaid =
-    (tier === "member" || tier === "pro") &&
-    (me?.status === "active" || me?.status === "trialing");
+  const status: AppStatus = (me?.status as AppStatus) ?? "free";
+
+  const isPaidTier = tier === "member" || tier === "pro";
+  const isPaid = isPaidTier && isActiveStatus(status);
 
   const showTrial = shouldShowTrial(me);
 
-  // Paid users → direct member view (avoids promo flicker)
+  // Paid users → direct member view (avoid promo flicker)
   useEffect(() => {
     if (!ready || !isPaid) return;
-    window.location.replace("/member/rewards");
-  }, [ready, isPaid]);
+    router.replace("/member/rewards");
+  }, [ready, isPaid, router]);
 
-  const subtitle = useMemo(() => {
-    if (!ready) return "Loading…";
-    return "Earn reward points on Member or Pro. Points convert to entries for our prize draws — a free postal route is always available.";
-  }, [ready]);
+  const subtitle = useMemo(
+    () =>
+      !ready
+        ? "Loading…"
+        : "Earn reward points on Member or Pro. Points convert to entries for our prize draws — a free postal route is always available.",
+    [ready]
+  );
 
   // Postal modal
   const [openPostal, setOpenPostal] = useState(false);
@@ -44,6 +55,15 @@ export default function RewardsPage() {
 
   // Sticky CTA only on public view
   const showSticky = ready && !isPaid;
+
+  if (ready && isPaid) {
+    // Small calm state while redirecting
+    return (
+      <Container>
+        <PageHeader title="Rewards" subtitle="Taking you to your rewards…" />
+      </Container>
+    );
+  }
 
   return (
     <>

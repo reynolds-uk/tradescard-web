@@ -19,6 +19,9 @@ const API_BASE =
   "https://tradescard-api.vercel.app";
 
 type Tier = "access" | "member" | "pro";
+type AppStatus = "free" | "trial" | "paid" | "inactive";
+const isActiveStatus = (s?: string) => s === "paid" || s === "trial";
+
 type NudgeSource = "banner" | "sticky" | "card" | "empty" | "teaser";
 
 type OfferWithExtras = Offer & {
@@ -30,11 +33,13 @@ export default function OffersPage() {
   /* ---------- Auth / membership ---------- */
   const me = useMe();
   const ready = useMeReady();
+
   const tier: Tier = (me?.tier as Tier) ?? "access";
+  const status: AppStatus = (me?.status as AppStatus) ?? "free";
+
   const isLoggedIn = !!me?.user;
   const isPaidTier = tier === "member" || tier === "pro";
-  const isActivePaid =
-    isPaidTier && (me?.status === "active" || me?.status === "trialing");
+  const isActivePaid = isPaidTier && isActiveStatus(status);
   const showTrial = shouldShowTrial(me);
 
   /* Where to bounce back after checkout/auth */
@@ -143,7 +148,7 @@ export default function OffersPage() {
   }, [items, cat, query]);
 
   /* Sticky join/upgrade bar shows for anyone not on an active paid plan */
-  const showSticky = ready && !isActivePaid;
+  const showSticky = useMemo(() => ready && !isActivePaid, [ready, isActivePaid]);
   const stickyIsVisitor = showSticky && !isLoggedIn;
 
   /* Interleave teaser cards for visitors/free */
@@ -166,7 +171,6 @@ export default function OffersPage() {
           role="region"
           aria-label="Join or upgrade"
         >
-          {/* iOS home-indicator clearance */}
           <div className="safe-inset-bottom" />
           <div className="mx-auto flex max-w-5xl items-center justify-between gap-2 px-4 py-3">
             <div className="text-xs text-neutral-300">
@@ -198,7 +202,6 @@ export default function OffersPage() {
       )}
 
       {/* ---------- Content ---------- */}
-      {/* When sticky bar is present, reserve space with safe-bottom-pad (prevents overlap) */}
       <Container className={showSticky ? "safe-bottom-pad md:pb-10" : "pb-10"}>
         <PageHeader
           title="Offers"

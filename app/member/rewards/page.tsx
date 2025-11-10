@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import PrimaryButton from "@/components/PrimaryButton";
@@ -10,6 +11,8 @@ import { useMe } from "@/lib/useMe";
 import { useMeReady } from "@/lib/useMeReady";
 
 type Tier = "access" | "member" | "pro";
+type AppStatus = "free" | "trial" | "paid" | "inactive";
+const isActiveStatus = (s?: string) => s === "paid" || s === "trial";
 
 type RewardsSummary = {
   lifetime_points: number;
@@ -22,27 +25,27 @@ const API_BASE =
   "https://tradescard-api.vercel.app";
 
 export default function MemberRewardsPage() {
+  const router = useRouter();
   const me = useMe();                 // { user?, tier?, status? }
   const ready = useMeReady();         // avoid auth flash
 
   const tier: Tier = (me?.tier as Tier) ?? "access";
-  const isPaid =
-    (tier === "member" || tier === "pro") &&
-    (me?.status === "active" || me?.status === "trialing");
+  const status: AppStatus = (me?.status as AppStatus) ?? "free";
+  const isPaid = (tier === "member" || tier === "pro") && isActiveStatus(status);
   const uid = me?.user?.id ?? null;
 
-  // If not paid (stale cookie etc.), bounce to public rewards
+  // If not paid (stale cookie etc.), bounce to public rewards (calm redirect)
   useEffect(() => {
     if (!ready) return;
-    if (!isPaid) window.location.replace("/rewards");
-  }, [ready, isPaid]);
+    if (!isPaid) router.replace("/rewards");
+  }, [ready, isPaid, router]);
 
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<RewardsSummary | null>(null);
   const [error, setError] = useState<string>("");
 
   // Tier multipliers
-  const boost = tier === "pro" ? 1.5 : 1.25; // this page is paid-only; default to Member boost
+  const boost = tier === "pro" ? 1.5 : 1.25; // paid-only page; default to Member boost
   const boostLabel = tier === "pro" ? "1.5×" : "1.25×";
 
   // Derived entries (client-side estimate for display only)
@@ -94,13 +97,22 @@ export default function MemberRewardsPage() {
     return "Your points and entries update automatically as you use TradeCard.";
   }, [ready]);
 
+  // Calm state while redirecting
+  if (ready && !isPaid) {
+    return (
+      <Container>
+        <PageHeader title="Rewards" subtitle="Taking you to the public rewards view…" />
+      </Container>
+    );
+  }
+
   return (
     <Container>
       <PageHeader title="Rewards" subtitle={subtitle} />
 
       {/* Errors */}
       {error && (
-        <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300 text-sm">
+        <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300 text-sm" role="alert">
           {error}
         </div>
       )}
@@ -109,10 +121,7 @@ export default function MemberRewardsPage() {
       {(!ready || loading) && (
         <div className="grid gap-3 sm:grid-cols-3">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div
-              key={i}
-              className="h-24 rounded-2xl border border-neutral-800 bg-neutral-900/60 animate-pulse"
-            />
+            <div key={i} className="h-24 rounded-2xl border border-neutral-800 bg-neutral-900/60 animate-pulse" />
           ))}
         </div>
       )}
@@ -156,51 +165,34 @@ export default function MemberRewardsPage() {
             <ul className="mt-1 grid gap-2 text-sm text-neutral-300 md:grid-cols-2">
               <li className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
                 <div className="font-medium">Redeem offers</div>
-                <p className="text-neutral-400">
-                  Earn activity points when you redeem partner deals.
-                </p>
+                <p className="text-neutral-400">Earn activity points when you redeem partner deals.</p>
                 <div className="mt-2">
-                  <Link
-                    href="/offers"
-                    className="inline-block rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs hover:bg-neutral-800"
-                  >
+                  <Link href="/offers" className="inline-block rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs hover:bg-neutral-800">
                     Browse offers
                   </Link>
                 </div>
               </li>
               <li className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
                 <div className="font-medium">Refer a mate</div>
-                <p className="text-neutral-400">
-                  Get a points boost when your referral activates their membership.
-                </p>
+                <p className="text-neutral-400">Get a points boost when your referral activates their membership.</p>
                 <div className="mt-2">
-                  <Link
-                    href="/account/referrals"
-                    className="inline-block rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs hover:bg-neutral-800"
-                  >
+                  <Link href="/account/referrals" className="inline-block rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs hover:bg-neutral-800">
                     Get referral link
                   </Link>
                 </div>
               </li>
               <li className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
                 <div className="font-medium">Stay on Pro</div>
-                <p className="text-neutral-400">
-                  Keep the 1.5× boost. Long-tenure multipliers apply at 12+ months.
-                </p>
+                <p className="text-neutral-400">Keep the 1.5× boost. Long-tenure multipliers apply at 12+ months.</p>
                 <div className="mt-2">
-                  <Link
-                    href="/account"
-                    className="inline-block rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs hover:bg-neutral-800"
-                  >
+                  <Link href="/account" className="inline-block rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs hover:bg-neutral-800">
                     Manage plan
                   </Link>
                 </div>
               </li>
               <li className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
                 <div className="font-medium">Stay active</div>
-                <p className="text-neutral-400">
-                  Periodic boosts for consecutive active months. Watch this space.
-                </p>
+                <p className="text-neutral-400">Periodic boosts for consecutive active months. Watch this space.</p>
               </li>
             </ul>
           </div>

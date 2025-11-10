@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
@@ -11,6 +12,8 @@ import { useMeReady } from "@/lib/useMeReady";
 import { routeToJoin } from "@/lib/routeToJoin";
 
 type Tier = "access" | "member" | "pro";
+type AppStatus = "free" | "trial" | "paid" | "inactive";
+const isActiveStatus = (s?: string) => s === "paid" || s === "trial";
 
 type Benefit = {
   id: string;
@@ -22,26 +25,26 @@ type Benefit = {
 };
 
 export default function MemberBenefitsPage() {
+  const router = useRouter();
   const me = useMe();
   const ready = useMeReady();
 
   const tier: Tier = (me?.tier as Tier) ?? "access";
-  const isPaid =
-    (tier === "member" || tier === "pro") &&
-    (me?.status === "active" || me?.status === "trialing");
+  const status: AppStatus = (me?.status as AppStatus) ?? "free";
 
-  // If somehow not paid (stale cookie etc.), bounce to public preview
+  const isPaid = (tier === "member" || tier === "pro") && isActiveStatus(status);
+
+  // If not on an active paid plan (stale cookie etc.), bounce to public preview
   useEffect(() => {
     if (!ready) return;
-    if (!isPaid) window.location.replace("/benefits");
-  }, [ready, isPaid]);
+    if (!isPaid) router.replace("/benefits");
+  }, [ready, isPaid, router]);
 
-  const subtitle =
-    !ready
-      ? "Loading…"
-      : tier === "pro"
-      ? "Your Pro benefits are listed below."
-      : "Your Member benefits are listed below. Upgrade to Pro for more.";
+  const subtitle = !ready
+    ? "Loading…"
+    : tier === "pro"
+    ? "Your Pro benefits are listed below."
+    : "Your Member benefits are listed below. Upgrade to Pro for more.";
 
   // ──────────────────────────────────────────────────────
   // Fetch benefits directly from Supabase (active only)
@@ -78,7 +81,6 @@ export default function MemberBenefitsPage() {
 
         if (error) throw error;
 
-        // Guard against nulls
         const rows: Benefit[] = (data ?? []).map((b: any) => ({
           id: b.id,
           title: b.title,
@@ -102,28 +104,37 @@ export default function MemberBenefitsPage() {
   }, [ready, isPaid, supabase]);
 
   // Only show benefits the user’s tier unlocks
-  const visibleBenefits = useMemo(() => {
-    return benefits.filter((b) => (tier === "pro" ? true : b.tier !== "pro"));
-  }, [benefits, tier]);
+  const visibleBenefits = useMemo(
+    () => benefits.filter((b) => (tier === "pro" ? true : b.tier !== "pro")),
+    [benefits, tier]
+  );
+
+  if (ready && !isPaid) {
+    // Calm state while redirecting
+    return (
+      <Container>
+        <PageHeader title="Benefits" subtitle="Taking you to the public benefits view…" />
+      </Container>
+    );
+  }
 
   return (
     <Container>
       <PageHeader title="Benefits" subtitle={subtitle} />
 
       {err && (
-        <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 p-3 text-red-300 text-sm">
+        <div
+          className="mb-4 rounded border border-red-600/40 bg-red-900/10 p-3 text-red-300 text-sm"
+          role="alert"
+        >
           {err}
         </div>
       )}
 
-      {loading && (
-        <div className="text-neutral-400 text-sm">Loading your benefits…</div>
-      )}
+      {loading && <div className="text-neutral-400 text-sm">Loading your benefits…</div>}
 
       {!loading && visibleBenefits.length === 0 && (
-        <div className="text-neutral-400 text-sm">
-          No active benefits found for your plan.
-        </div>
+        <div className="text-neutral-400 text-sm">No active benefits found for your plan.</div>
       )}
 
       <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -137,9 +148,7 @@ export default function MemberBenefitsPage() {
           <div className="text-sm text-neutral-300">
             Unlock Pro-only benefits such as early access and Pro-exclusive offers.
           </div>
-          <PrimaryButton onClick={() => routeToJoin("pro")}>
-            Upgrade to Pro
-          </PrimaryButton>
+          <PrimaryButton onClick={() => routeToJoin("pro")}>Upgrade to Pro</PrimaryButton>
         </div>
       )}
     </Container>
