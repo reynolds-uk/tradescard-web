@@ -8,13 +8,16 @@ import { routeToJoin } from "@/lib/routeToJoin";
 import PrimaryButton from "@/components/PrimaryButton";
 
 type Gate = "paid" | "pro";
+type Tier = "access" | "member" | "pro";
+type AppStatus = "free" | "trial" | "paid" | "inactive";
 
 export default function TierGate({
   gate = "paid",
   title = gate === "pro" ? "Pro only" : "Members only",
-  blurb = gate === "pro"
-    ? "Upgrade to Pro to unlock this."
-    : "Join to unlock benefits and member-only pricing.",
+  blurb =
+    gate === "pro"
+      ? "Upgrade to Pro to unlock this."
+      : "Join to unlock benefits and member-only pricing.",
   children,
 }: {
   gate?: Gate;
@@ -23,10 +26,13 @@ export default function TierGate({
   children: React.ReactNode;
 }) {
   const me = useMe();
+
   const signedIn = !!me?.user;
-  const tier = (me?.tier as "access" | "member" | "pro") ?? "access";
-  const status = me?.status ?? "free";
-  const active = status === "active" || status === "trialing";
+  const tier: Tier = (me?.tier as Tier) ?? "access";
+  const status: AppStatus = (me?.status as AppStatus) ?? "free";
+
+  // New status model: active if paid or on trial
+  const active = status === "paid" || status === "trial";
   const isPaid = (tier === "member" || tier === "pro") && active;
   const isPro = tier === "pro" && active;
 
@@ -57,7 +63,9 @@ export default function TierGate({
 
           <div className="mt-3 flex flex-wrap gap-2">
             {gate === "pro" ? (
-              <PrimaryButton onClick={() => routeToJoin("pro")}>Go Pro</PrimaryButton>
+              <PrimaryButton onClick={() => routeToJoin("pro")}>
+                Go Pro
+              </PrimaryButton>
             ) : (
               <>
                 <PrimaryButton onClick={() => routeToJoin("member")}>
@@ -73,7 +81,7 @@ export default function TierGate({
             )}
           </div>
 
-          {/* Show the sign-in hint only when NOT signed in */}
+          {/* Sign-in hint only when NOT signed in */}
           {!signedIn && (
             <div className="mt-2 text-xs text-neutral-400">
               Already a member?{" "}
