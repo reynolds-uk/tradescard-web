@@ -1,43 +1,58 @@
-// app/member/layout.tsx
-"use client";
+// app/layout.tsx
+import "./globals.css";
+import Nav from "./components/Nav";
+import SiteFooter from "./components/SiteFooter";
 
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { useMe } from "@/lib/useMe";
-import { useMeReady } from "@/lib/useMeReady";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
 
-type Tier = "access" | "member" | "pro";
-type AppStatus = "free" | "trial" | "paid" | "inactive";
+function BuildStamp() {
+  const env = process.env.VERCEL_ENV ?? "dev";
+  const show = process.env.SHOW_BUILD_META === "true" || env !== "production";
+  if (!show) return null;
 
-// Centralised check for “allowed into /member/*”
-function isActivePaid(tier?: Tier, status?: AppStatus) {
-  if (!tier || !status) return false;
-  const paidTier = tier === "member" || tier === "pro";
-  const okStatus = status === "paid" || status === "trial";
-  return paidTier && okStatus;
+  const sha = process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "local";
+  const msg = process.env.VERCEL_GIT_COMMIT_MESSAGE ?? "";
+  const note = process.env.BUILD_NOTE ?? "";
+  const responsive = env === "production" ? "hidden sm:flex" : "flex";
+
+  return (
+    <footer className="border-t border-neutral-900/60">
+      <div
+        className={`mx-auto max-w-5xl items-center gap-3 px-4 py-3 text-[11px] text-neutral-500 ${responsive}`}
+      >
+        <span>env: {env}</span>
+        <span>•</span>
+        <span>build: {sha}</span>
+        {note && (
+          <>
+            <span>•</span>
+            <span className="truncate">{note}</span>
+          </>
+        )}
+        {msg && (
+          <>
+            <span>•</span>
+            <span className="flex-1 truncate" title={msg}>
+              {msg}
+            </span>
+          </>
+        )}
+      </div>
+    </footer>
+  );
 }
 
-export default function MemberLayout({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
-  const me = useMe();
-  const ready = useMeReady();
-
-  const tier = (me?.tier as Tier | undefined) ?? "access";
-  const status = me?.status as AppStatus | undefined;
-  const allowed = isActivePaid(tier, status);
-
-  useEffect(() => {
-    if (!ready) return;
-    if (!allowed) router.replace("/join?mode=signin");
-  }, [ready, allowed, router]);
-
-  if (!ready || !allowed) {
-    return (
-      <div className="mx-auto max-w-5xl px-4 py-8 text-sm text-neutral-400">
-        Checking your membership…
-      </div>
-    );
-  }
-
-  return <>{children}</>;
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body className="bg-neutral-950 text-neutral-100 antialiased">
+        <Nav />
+        {children}
+        <SiteFooter />
+        <BuildStamp />
+      </body>
+    </html>
+  );
 }
