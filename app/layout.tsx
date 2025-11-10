@@ -1,45 +1,41 @@
-// app/layout.tsx
-import "./globals.css";
-import Nav from "./components/Nav";
-import SiteFooter from "./components/SiteFooter";
+"use client";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-export const fetchCache = "force-no-store";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useMe } from "@/lib/useMe";
+import { useMeReady } from "@/lib/useMeReady";
+import type { Me } from "@/lib/useMe";
+import { isActivePaid } from "@/lib/trial"; // re-use the helper we added
 
-function BuildStamp() {
-  const env = process.env.VERCEL_ENV ?? "dev";
-  const show = process.env.SHOW_BUILD_META === "true" || env !== "production";
-  if (!show) return null;
+type Tier = "access" | "member" | "pro";
+type AppStatus = "free" | "trial" | "paid" | "inactive";
 
-  const sha  = process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "local";
-  const msg  = process.env.VERCEL_GIT_COMMIT_MESSAGE ?? "";
-  const note = process.env.BUILD_NOTE ?? "";
+export default function MemberLayout({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const me: Me = useMe();
+  const ready = useMeReady();
 
-  const responsive = env === "production" ? "hidden sm:flex" : "flex";
+  const tier = (me?.tier as Tier) ?? "access";
+  const status = me?.status as AppStatus | undefined;
 
-  return (
-    <footer className="border-t border-neutral-900/60">
-      <div className={`mx-auto max-w-5xl items-center gap-3 px-4 py-3 text-[11px] text-neutral-500 ${responsive}`}>
-        <span>env: {env}</span>
-        <span>•</span>
-        <span>build: {sha}</span>
-        {note && (<><span>•</span><span className="truncate">{note}</span></>)}
-        {msg &&  (<><span>•</span><span className="flex-1 truncate" title={msg}>{msg}</span></>)}
+  const ok = isActivePaid(tier, status);
+
+  useEffect(() => {
+    if (!ready) return;
+    if (!ok) {
+      // Not on an active paid plan → send to join/sign-in
+      router.replace("/join?mode=signin");
+    }
+  }, [ready, ok, router]);
+
+  // While we decide/redirect, avoid content flash
+  if (!ready || !ok) {
+    return (
+      <div className="mx-auto max-w-5xl px-4 py-8 text-sm text-neutral-400">
+        Checking your membership…
       </div>
-    </footer>
-  );
-}
+    );
+  }
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <html lang="en">
-      <body className="bg-neutral-950 text-neutral-100 antialiased">
-        <Nav />
-        {children}
-        <SiteFooter />
-        <BuildStamp />
-      </body>
-    </html>
-  );
+  return <>{children}</>;
 }
