@@ -1,4 +1,3 @@
-// app/welcome/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -46,7 +45,7 @@ const API_BASE =
   "https://tradescard-api.vercel.app";
 
 export default function WelcomePage() {
-  // Session + data
+  // SESSION + DATA
   const { data: me } = useSessionUser();
   const userId = me?.id ?? null;
   const { data: profile } = useProfile(userId);
@@ -54,9 +53,9 @@ export default function WelcomePage() {
 
   const tier: Tier = (member?.tier as Tier) ?? "access";
   const showTrial = shouldShowTrial({ tier } as any);
+
   const params = useSearchParams();
 
-  // Client Supabase (only for auth + profile upsert)
   const supabase = useMemo(
     () =>
       createClient(
@@ -67,11 +66,11 @@ export default function WelcomePage() {
   );
 
   // Form state
-  const [name, setName] = useState<string>("");
-  const [phone, setPhone] = useState<string>("");
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
   const [saving, setSaving] = useState(false);
   const [savedOnce, setSavedOnce] = useState(false);
-  const [error, setError] = useState<string>("");
+  const [error, setError] = useState("");
 
   // UI helpers
   const [copied, setCopied] = useState(false);
@@ -83,18 +82,14 @@ export default function WelcomePage() {
   const [resending, setResending] = useState(false);
   const [countdown, setCountdown] = useState(0); // seconds
 
-  /* ---------------------------------
-     Pre-fill profile when available
-  ----------------------------------*/
+  // Prefill once profile lands
   useEffect(() => {
     if (!profile) return;
     setName(profile.name ?? "");
     setPhone((profile as any).phone ?? "");
   }, [profile]);
 
-  function maskedId(id?: string) {
-    return id ? `${id.slice(0, 6)}…${id.slice(-4)}` : "—";
-  }
+  const maskedId = (id?: string) => (id ? `${id.slice(0, 6)}…${id.slice(-4)}` : "—");
 
   function goJoin(plan: "member" | "pro") {
     try {
@@ -110,9 +105,7 @@ export default function WelcomePage() {
       await navigator.clipboard.writeText(userId);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* no-op */
-    }
+    } catch {}
   }
 
   // Lenient phone validator
@@ -129,7 +122,6 @@ export default function WelcomePage() {
 
     setSaving(true);
     try {
-      // Upsert profile (works whether or not the row exists yet)
       const { error: upErr } = await supabase
         .from("profiles")
         .upsert(
@@ -148,8 +140,7 @@ export default function WelcomePage() {
       setSavedOnce(true);
       track("welcome_profile_saved", { tier, has_phone: !!phone });
 
-      if (tier === "access") window.location.href = "/offers";
-      else window.location.href = "/account";
+      window.location.href = tier === "access" ? "/offers" : "/account";
     } catch (e: any) {
       setError(e?.message || "We couldn’t save your details just now.");
     } finally {
@@ -159,26 +150,18 @@ export default function WelcomePage() {
 
   function skipForNow() {
     track("welcome_skip", { tier });
-    if (tier === "access") window.location.href = "/offers";
-    else window.location.href = "/account";
+    window.location.href = tier === "access" ? "/offers" : "/account";
   }
 
-  /* --------------------------------------------
-     Handle return from Stripe (pending activation)
-     (Noisy fetch trimmed: only runs when needed)
-  ---------------------------------------------*/
+  // Handle checkout return → activation (only if not already signed in)
   useEffect(() => {
     const sessionId = params.get("session_id");
     const pending = params.get("pending") === "1";
-
-    // Only run if *not* signed in and we truly have a pending session
-    if (!pending || !sessionId || userId) return;
+    if (!sessionId || !pending || userId) return;
 
     (async () => {
       try {
         setPendingInfo("Finalising your membership…");
-
-        // Resolve email once
         const res = await fetch(
           `${API_BASE}/api/claim?session_id=${encodeURIComponent(sessionId)}`
         );
@@ -187,7 +170,7 @@ export default function WelcomePage() {
         if (!email) throw new Error("No email returned for session");
         setPendingEmail(email);
 
-        // Auto-send the first magic link and start a resend cooldown
+        // Send initial magic link and start 30s cooldown
         const { error: otpErr } = await supabase.auth.signInWithOtp({
           email,
           options: { emailRedirectTo: new URL("/welcome", APP_URL).toString() },
@@ -208,13 +191,14 @@ export default function WelcomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params, userId]);
 
-  // Resend cooldown
+  // Cooldown tick
   useEffect(() => {
     if (countdown <= 0) return;
     const t = setInterval(() => setCountdown((c) => (c > 0 ? c - 1 : 0)), 1000);
     return () => clearInterval(t);
   }, [countdown]);
 
+  // Resend magic link
   const resend = async () => {
     if (!pendingEmail || countdown > 0 || resending) return;
     setResending(true);
@@ -226,7 +210,7 @@ export default function WelcomePage() {
       });
       if (otpErr) throw otpErr;
     } catch {
-      // allow immediate retry if it failed
+      // let them try again if it failed
       setCountdown(0);
     } finally {
       setResending(false);
@@ -236,7 +220,7 @@ export default function WelcomePage() {
   const canResend = countdown === 0 && !!pendingEmail;
 
   // Lock scroll while overlay is visible
-  const showActivationOverlay = !userId && params.get("pending") === "1";
+  const showActivationOverlay = !userId && params.get("pending") === "1" && !!pendingEmail;
   useEffect(() => {
     if (!showActivationOverlay) return;
     const { body } = document;
@@ -247,14 +231,11 @@ export default function WelcomePage() {
     };
   }, [showActivationOverlay]);
 
-  /* --------------------------
-     Render
-  ---------------------------*/
   return (
     <>
-      {showActivationOverlay && (
+      {showActivationOverlay && pendingEmail && (
         <ActivateEmailOverlay
-          email={pendingEmail}
+          email={pendingEmail!}
           info={pendingInfo}
           onResend={resend}
           canResend={canResend}
@@ -316,13 +297,8 @@ export default function WelcomePage() {
               </div>
             </div>
 
-            {/* Next steps quick links (disabled while activation required) */}
-            <aside
-              className={`rounded-xl border border-neutral-800 bg-neutral-900 p-4 ${
-                showActivationOverlay ? "opacity-50 pointer-events-none" : ""
-              }`}
-              aria-disabled={showActivationOverlay}
-            >
+            {/* Next steps quick links */}
+            <aside className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
               <div className="font-medium">What next?</div>
               <p className="mt-1 text-sm text-neutral-300">{TIER_COPY[tier].blurb}</p>
 
