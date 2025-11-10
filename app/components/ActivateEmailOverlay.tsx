@@ -1,102 +1,72 @@
-// app/components/ActivateEmailOverlay.tsx
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
-import { useRouter, useSearchParams } from "next/navigation";
+type Props = {
+  email: string;
+  info?: string;
+  onResend?: () => void;
+  canResend?: boolean;
+  countdown?: number;     // seconds left until next resend
+  resending?: boolean;
+};
 
-const supa = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
-export default function ActivateEmailOverlay({ email }: { email: string }) {
-  const router = useRouter();
-  const [cooldown, setCooldown] = useState<number>(0);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Stop any rogue timers on unmount
-  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
-
-  const startCooldown = (secs = 30) => {
-    setCooldown(secs);
-    timerRef.current && clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      setCooldown((s) => {
-        if (s <= 1) {
-          clearInterval(timerRef.current!);
-          return 0;
-        }
-        return s - 1;
-      });
-    }, 1000);
-  };
-
-  const handleResend = async () => {
-    setError(null);
-    setSending(true);
-    try {
-      // Fire a fresh magic-link to the same email
-      const { error } = await supa.auth.signInWithOtp({
-        email,
-        options: { emailRedirectTo: `${window.location.origin}/welcome` },
-      });
-      if (error) throw error;
-      startCooldown(30);
-    } catch (e: any) {
-      setError(e?.message ?? "Could not resend email.");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const handleDifferentEmail = async () => {
-    // best-effort: clear only local session to keep webhook flows intact
-    await supa.auth.signOut({ scope: "local" });
-    const url = new URL("/join", window.location.origin);
-    url.searchParams.set("mode", "join");
-    url.searchParams.set("free", "1");
-    router.replace(url.toString());
-  };
+export default function ActivateEmailOverlay({
+  email,
+  info,
+  onResend,
+  canResend = false,
+  countdown = 0,
+  resending = false,
+}: Props) {
+  const canClick = !!onResend && canResend && !resending;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-[92vw] max-w-[520px] rounded-2xl border border-amber-500/30 bg-neutral-900 p-6 shadow-2xl">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full border border-amber-500/40">
-          <span className="text-xl">✉️</span>
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Activate your account"
+    >
+      <div className="mx-4 w-full max-w-lg rounded-2xl border border-amber-400/30 bg-neutral-950 p-6 text-neutral-100 shadow-2xl">
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-amber-400/30 bg-amber-400/10">
+          <svg viewBox="0 0 24 24" className="h-6 w-6" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7zm2 0v.3l7 4.2 7-4.2V7H5zm14 2.7-7 4.2-7-4.2V17h14V9.7z"
+            />
+          </svg>
         </div>
-        <h2 className="mb-2 text-center text-xl font-semibold">Check your email to activate</h2>
-        <p className="mb-1 text-center text-neutral-300">
-          We’ve sent a secure sign-in link to <strong className="text-neutral-100">{email}</strong>.
-          Click it to confirm your account — then return here to finish setup.
-        </p>
-        <p className="mb-4 text-center text-neutral-400 text-sm">
-          We’ve emailed you a one-time link. Open it to activate your account.
+
+        <h1 className="text-center text-xl font-semibold">Check your email to activate</h1>
+
+        <p className="mt-2 text-center">
+          We’ve sent a secure sign-in link to{" "}
+          <span className="font-mono">{email}</span>. Click it to confirm your account — then return
+          here to finish setup.
         </p>
 
-        {error && <p className="mb-3 text-center text-sm text-red-400">{error}</p>}
+        {info ? (
+          <p className="mt-2 text-center text-neutral-300 text-sm">{info}</p>
+        ) : null}
 
-        <div className="flex items-center justify-center gap-4">
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
           <button
-            onClick={handleResend}
-            disabled={sending || cooldown > 0}
-            className={`rounded-md px-3 py-2 text-sm font-medium ${
-              sending || cooldown > 0
-                ? "cursor-not-allowed bg-neutral-800 text-neutral-500"
-                : "bg-neutral-100 text-neutral-900 hover:bg-white"
-            }`}
+            onClick={canClick ? onResend : undefined}
+            disabled={!canClick}
+            className="rounded-lg bg-white/10 px-4 py-2 text-sm hover:bg-white/15 disabled:opacity-50"
           >
-            {cooldown > 0 ? `Resend link in ${cooldown}s` : "Resend link"}
+            {resending
+              ? "Sending…"
+              : countdown > 0
+              ? `Resend link in ${countdown}s`
+              : "Resend link"}
           </button>
 
-          <button
-            onClick={handleDifferentEmail}
+          <a
+            href="/join?mode=join&free=1"
             className="text-sm text-neutral-300 underline underline-offset-4 hover:text-white"
           >
             Use a different email
-          </button>
+          </a>
         </div>
 
         <p className="mt-4 text-center text-xs text-neutral-500">
