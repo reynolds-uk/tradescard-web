@@ -24,7 +24,7 @@ export function useProfile(userId?: string | null) {
     async () => {
       const { data, error } = await supa
         .from("profiles")
-        .select("user_id,email,name,phone")   // <- consistent shape
+        .select("user_id,email,name")
         .eq("user_id", userId!)
         .single();                            // <- avoid array shape
       if (error) throw error;
