@@ -1,35 +1,37 @@
+// app/member/layout.tsx
 "use client";
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useMe } from "@/lib/useMe";
 import { useMeReady } from "@/lib/useMeReady";
-import type { Me } from "@/lib/useMe";
-import { isActivePaid } from "@/lib/trial"; // re-use the helper we added
 
 type Tier = "access" | "member" | "pro";
 type AppStatus = "free" | "trial" | "paid" | "inactive";
 
+// Centralised check for “allowed into /member/*”
+function isActivePaid(tier?: Tier, status?: AppStatus) {
+  if (!tier || !status) return false;
+  const paidTier = tier === "member" || tier === "pro";
+  const okStatus = status === "paid" || status === "trial";
+  return paidTier && okStatus;
+}
+
 export default function MemberLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const me: Me = useMe();
+  const me = useMe();
   const ready = useMeReady();
 
-  const tier = (me?.tier as Tier) ?? "access";
+  const tier = (me?.tier as Tier | undefined) ?? "access";
   const status = me?.status as AppStatus | undefined;
-
-  const ok = isActivePaid(tier, status);
+  const allowed = isActivePaid(tier, status);
 
   useEffect(() => {
     if (!ready) return;
-    if (!ok) {
-      // Not on an active paid plan → send to join/sign-in
-      router.replace("/join?mode=signin");
-    }
-  }, [ready, ok, router]);
+    if (!allowed) router.replace("/join?mode=signin");
+  }, [ready, allowed, router]);
 
-  // While we decide/redirect, avoid content flash
-  if (!ready || !ok) {
+  if (!ready || !allowed) {
     return (
       <div className="mx-auto max-w-5xl px-4 py-8 text-sm text-neutral-400">
         Checking your membership…
