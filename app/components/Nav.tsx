@@ -4,23 +4,33 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useMe } from "@/lib/useMe";
+import { useMeReady } from "@/lib/useMeReady";
 import { routeToJoin } from "@/lib/routeToJoin";
+
+type Tier = "access" | "member" | "pro";
+type AppStatus = "free" | "trial" | "paid" | "inactive";
+const isActiveStatus = (s?: string) => s === "paid" || s === "trial";
 
 export default function Nav() {
   const router = useRouter();
   const pathname = usePathname();
 
+  const ready = useMeReady();
   const me = useMe(); // { user, tier, status }
+
   const signedIn = !!me?.user;
-  const tier = (me?.tier as "access" | "member" | "pro") ?? "access";
-  const status = me?.status ?? "free";
+  const tier: Tier = (me?.tier as Tier) ?? "access";
+  const status: AppStatus = (me?.status as AppStatus) ?? "free";
+  const activePaid = (tier === "member" || tier === "pro") && isActiveStatus(status);
   const canUpgrade = signedIn && tier !== "pro";
 
-  // One CTA decision: always "Join" when logged out.
-  // (We purposely removed the trial chip from Nav to avoid duplicates.)
+  const onJoinPage = pathname?.startsWith("/join") ?? false;
   const primaryCtaLabel = "Join";
 
-  // Light labels
+  // Active link styling
+  const isActive = (href: string) => (pathname === href ? "text-white" : "hover:opacity-90");
+
+  // Tier badge (only when signed in)
   const tierBadge = useMemo(() => {
     if (!signedIn) return null;
     const tone =
@@ -43,9 +53,6 @@ export default function Nav() {
     close();
     router.push(href);
   };
-
-  // Hide Join button on the /join page (the header handles CTAs there)
-  const onJoinPage = pathname?.startsWith("/join");
 
   return (
     <nav className="sticky top-0 z-40 border-b border-neutral-900/60 bg-neutral-950/80 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/60">
@@ -77,23 +84,29 @@ export default function Nav() {
 
         {/* Desktop primary links */}
         <div className="ml-2 hidden items-center gap-3 text-sm sm:flex">
-          <Link href="/offers" className="hover:opacity-90">
+          <Link href="/offers" className={isActive("/offers")}>
             Offers
           </Link>
-          <Link href="/benefits" className="hover:opacity-90">
+          <Link href="/benefits" className={isActive("/benefits")}>
             Benefits
           </Link>
-          <Link href="/rewards" className="hover:opacity-90">
+          <Link href="/rewards" className={isActive("/rewards")}>
             Rewards
           </Link>
         </div>
 
         {/* Right-hand actions */}
         <div className="ml-auto hidden items-center gap-2 sm:flex">
-          {signedIn ? (
+          {/* While auth is resolving, keep things calm (avoid flicker) */}
+          {!ready ? (
+            <>
+              <div className="h-6 w-16 rounded bg-neutral-800 animate-pulse" />
+              <div className="h-8 w-20 rounded bg-neutral-800 animate-pulse" />
+            </>
+          ) : signedIn ? (
             <>
               {tierBadge}
-              {(status === "active" || status === "trialing") && (
+              {activePaid && (
                 <span className="rounded px-2 py-0.5 text-[11px] bg-neutral-800 text-neutral-300">
                   {status}
                 </span>
@@ -139,7 +152,6 @@ export default function Nav() {
         className={[
           "sm:hidden fixed inset-x-0 top-[56px] transition-transform duration-200",
           open ? "translate-y-0" : "-translate-y-[150%]",
-          // Opaque fallback + tasteful blur if supported
           "bg-neutral-950",
           "supports-[backdrop-filter]:bg-neutral-950/90 supports-[backdrop-filter]:backdrop-blur-md",
           "border-t border-neutral-900/70",
@@ -168,7 +180,12 @@ export default function Nav() {
 
             <div className="my-2 h-px bg-neutral-900/80" />
 
-            {signedIn ? (
+            {!ready ? (
+              <>
+                <div className="h-9 rounded bg-neutral-900 animate-pulse" />
+                <div className="h-9 rounded border border-neutral-800 bg-neutral-900 animate-pulse" />
+              </>
+            ) : signedIn ? (
               <>
                 {canUpgrade && (
                   <button
