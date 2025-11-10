@@ -27,6 +27,6 @@
     "types": ["node", "next"],
     "plugins": [{ "name": "next" }]
   },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", "scripts/audit.cjs"],
   "exclude": ["node_modules"]
 }
