@@ -9,9 +9,13 @@ import { createClient } from "@supabase/supabase-js";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import PrimaryButton from "@/components/PrimaryButton";
-import { useMe } from "@/lib/useMe";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 import { track } from "@/lib/track";
+
+// Shared data hooks
+import { useSessionUser, useProfile, useMember } from "@/lib/data";
+// Extracted overlay
+import ActivateEmailOverlay from "@/components/ActivateEmailOverlay";
 
 type Tier = "access" | "member" | "pro";
 
@@ -41,90 +45,18 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://tradescard-api.vercel.app";
 
-/* -------------------------
-   Activation Overlay (modal)
---------------------------*/
-function ActivateOverlay({
-  email,
-  info,
-  onResend,
-  canResend,
-  countdown,
-  resending,
-}: {
-  email: string | null;
-  info?: string;
-  onResend: () => void;
-  canResend: boolean;
-  countdown: number;
-  resending: boolean;
-}) {
-  return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Activate your account"
-    >
-      <div className="mx-4 w-full max-w-lg rounded-2xl border border-amber-400/30 bg-neutral-950 p-6 text-neutral-100 shadow-2xl">
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-amber-400/30 bg-amber-400/10">
-          <svg viewBox="0 0 24 24" className="h-6 w-6" aria-hidden="true">
-            <path
-              fill="currentColor"
-              d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7zm2 0v.3l7 4.2 7-4.2V7H5zm14 2.7-7 4.2-7-4.2V17h14V9.7z"
-            />
-          </svg>
-        </div>
-
-        <h1 className="text-center text-xl font-semibold">Check your email to activate</h1>
-        <p className="mt-2 text-center">
-          We’ve sent a secure sign-in link to{" "}
-          <span className="font-mono">{email ?? "—"}</span>. Click it to confirm your account —
-          then return here to finish setup.
-        </p>
-
-        {info && (
-          <p className="mt-2 text-center text-neutral-300 text-sm">
-            {info}
-          </p>
-        )}
-
-        <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
-          <button
-            onClick={onResend}
-            disabled={!canResend || resending}
-            className="rounded-lg bg-white/10 px-4 py-2 text-sm hover:bg-white/15 disabled:opacity-50"
-          >
-            {resending
-              ? "Sending…"
-              : countdown > 0
-              ? `Resend link in ${countdown}s`
-              : "Resend link"}
-          </button>
-
-          <a
-            href="/join?mode=join&free=1"
-            className="text-sm text-neutral-300 underline underline-offset-4 hover:text-white"
-          >
-            Use a different email
-          </a>
-        </div>
-
-        <p className="mt-4 text-center text-xs text-neutral-500">
-          Tip: check your spam or promotions folder if it hasn’t arrived within a minute.
-        </p>
-      </div>
-    </div>
-  );
-}
-
 export default function WelcomePage() {
-  const me = useMe(); // { ready, user?, tier?, status? }
-  const user = me.user;
-  const tier: Tier = (me.tier as Tier) ?? "access";
+  // Session + data
+  const { data: me } = useSessionUser();
+  const userId = me?.id ?? null;
+  const { data: profile } = useProfile(userId);
+  const { data: member } = useMember(userId);
 
+  const tier: Tier = (member?.tier as Tier) ?? "access";
+  const showTrial = shouldShowTrial({ tier } as any);
   const params = useSearchParams();
 
+  // Client Supabase (only for auth + profile upsert)
   const supabase = useMemo(
     () =>
       createClient(
@@ -143,7 +75,6 @@ export default function WelcomePage() {
 
   // UI helpers
   const [copied, setCopied] = useState(false);
-  const showTrial = shouldShowTrial(me as any);
   const accessCta = showTrial ? TRIAL_COPY : "Become a Member (£2.99/mo)";
 
   // Activation overlay state
@@ -153,29 +84,13 @@ export default function WelcomePage() {
   const [countdown, setCountdown] = useState(0); // seconds
 
   /* ---------------------------------
-     Pre-fill profile if user is known
+     Pre-fill profile when available
   ----------------------------------*/
   useEffect(() => {
-    if (!user?.id) return;
-
-    let aborted = false;
-    (async () => {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("name, phone")
-        .eq("user_id", user.id)
-        .single();
-
-      if (!aborted && !error && data) {
-        setName(data.name ?? "");
-        setPhone((data as any).phone ?? "");
-      }
-    })();
-
-    return () => {
-      aborted = true;
-    };
-  }, [user?.id, supabase]);
+    if (!profile) return;
+    setName(profile.name ?? "");
+    setPhone((profile as any).phone ?? "");
+  }, [profile]);
 
   function maskedId(id?: string) {
     return id ? `${id.slice(0, 6)}…${id.slice(-4)}` : "—";
@@ -190,9 +105,9 @@ export default function WelcomePage() {
   }
 
   async function copyCardId() {
-    if (!user?.id) return;
+    if (!userId) return;
     try {
-      await navigator.clipboard.writeText(user.id);
+      await navigator.clipboard.writeText(userId);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -200,14 +115,11 @@ export default function WelcomePage() {
     }
   }
 
-  // Basic UK-ish phone validator (lenient)
-  const isValidPhone = (v: string) => {
-    const s = v.replace(/[\s\-\(\)]/g, "");
-    return /^(\+?\d{10,15})$/.test(s);
-  };
+  // Lenient phone validator
+  const isValidPhone = (v: string) => /^(\+?\d{10,15})$/.test(v.replace(/[\s\-\(\)]/g, ""));
 
   async function saveAndContinue() {
-    if (!user?.id) return;
+    if (!userId) return;
 
     setError("");
     if ((tier === "member" || tier === "pro") && !isValidPhone(phone)) {
@@ -217,14 +129,19 @@ export default function WelcomePage() {
 
     setSaving(true);
     try {
+      // Upsert profile (works whether or not the row exists yet)
       const { error: upErr } = await supabase
         .from("profiles")
-        .update({
-          name: name || null,
-          phone: phone || null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("user_id", user.id);
+        .upsert(
+          {
+            user_id: userId,
+            email: profile?.email ?? null,
+            name: name || null,
+            phone: phone || null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" }
+        );
 
       if (upErr) throw upErr;
 
@@ -248,15 +165,20 @@ export default function WelcomePage() {
 
   /* --------------------------------------------
      Handle return from Stripe (pending activation)
+     (Noisy fetch trimmed: only runs when needed)
   ---------------------------------------------*/
   useEffect(() => {
     const sessionId = params.get("session_id");
     const pending = params.get("pending") === "1";
-    if (!sessionId || !pending || user) return;
+
+    // Only run if *not* signed in and we truly have a pending session
+    if (!pending || !sessionId || userId) return;
 
     (async () => {
       try {
         setPendingInfo("Finalising your membership…");
+
+        // Resolve email once
         const res = await fetch(
           `${API_BASE}/api/claim?session_id=${encodeURIComponent(sessionId)}`
         );
@@ -265,7 +187,7 @@ export default function WelcomePage() {
         if (!email) throw new Error("No email returned for session");
         setPendingEmail(email);
 
-        // Auto-send initial magic link
+        // Auto-send the first magic link and start a resend cooldown
         const { error: otpErr } = await supabase.auth.signInWithOtp({
           email,
           options: { emailRedirectTo: new URL("/welcome", APP_URL).toString() },
@@ -275,18 +197,18 @@ export default function WelcomePage() {
         setPendingInfo(
           "We’ve emailed you a secure sign-in link. Open it to activate your account."
         );
-        setCountdown(30); // initial cooldown after auto-send
+        setCountdown(30);
       } catch (e: any) {
         setPendingInfo(
           e?.message || "We couldn’t start activation automatically. Please check your email."
         );
-        setCountdown(0); // allow manual resend if auto-send failed
+        setCountdown(0);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params, user?.id]);
+  }, [params, userId]);
 
-  // Countdown
+  // Resend cooldown
   useEffect(() => {
     if (countdown <= 0) return;
     const t = setInterval(() => setCountdown((c) => (c > 0 ? c - 1 : 0)), 1000);
@@ -296,7 +218,7 @@ export default function WelcomePage() {
   const resend = async () => {
     if (!pendingEmail || countdown > 0 || resending) return;
     setResending(true);
-    setCountdown(30); // start immediately to block spamming
+    setCountdown(30);
     try {
       const { error: otpErr } = await supabase.auth.signInWithOtp({
         email: pendingEmail,
@@ -304,7 +226,7 @@ export default function WelcomePage() {
       });
       if (otpErr) throw otpErr;
     } catch {
-      // let them try again if it failed
+      // allow immediate retry if it failed
       setCountdown(0);
     } finally {
       setResending(false);
@@ -314,7 +236,7 @@ export default function WelcomePage() {
   const canResend = countdown === 0 && !!pendingEmail;
 
   // Lock scroll while overlay is visible
-  const showActivationOverlay = !user && (params.get("pending") === "1");
+  const showActivationOverlay = !userId && params.get("pending") === "1";
   useEffect(() => {
     if (!showActivationOverlay) return;
     const { body } = document;
@@ -331,7 +253,7 @@ export default function WelcomePage() {
   return (
     <>
       {showActivationOverlay && (
-        <ActivateOverlay
+        <ActivateEmailOverlay
           email={pendingEmail}
           info={pendingInfo}
           onResend={resend}
@@ -368,7 +290,7 @@ export default function WelcomePage() {
             {/* Card & details */}
             <div className="md:col-span-2">
               <div className="text-2xl font-semibold">TradeCard</div>
-              <div className="mt-1 text-sm text-neutral-300">{user?.email ?? "—"}</div>
+              <div className="mt-1 text-sm text-neutral-300">{profile?.email ?? "—"}</div>
 
               <div className="mt-3 grid grid-cols-3 gap-2">
                 <div className="rounded-lg border border-neutral-800 p-3 text-center">
@@ -377,7 +299,7 @@ export default function WelcomePage() {
                 </div>
 
                 <div className="rounded-lg border border-neutral-800 p-3 text-center">
-                  <div className="text-xl font-semibold truncate">{maskedId(user?.id)}</div>
+                  <div className="text-xl font-semibold truncate">{maskedId(userId ?? undefined)}</div>
                   <div className="mt-1 text-xs text-neutral-400">Card ID</div>
                 </div>
 
@@ -385,7 +307,7 @@ export default function WelcomePage() {
                   <button
                     onClick={copyCardId}
                     className="rounded bg-neutral-800 px-3 py-1 text-sm hover:bg-neutral-700 disabled:opacity-50"
-                    disabled={!user?.id}
+                    disabled={!userId}
                   >
                     {copied ? "Copied ✓" : "Copy ID"}
                   </button>
@@ -394,8 +316,13 @@ export default function WelcomePage() {
               </div>
             </div>
 
-            {/* Next steps quick links */}
-            <aside className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+            {/* Next steps quick links (disabled while activation required) */}
+            <aside
+              className={`rounded-xl border border-neutral-800 bg-neutral-900 p-4 ${
+                showActivationOverlay ? "opacity-50 pointer-events-none" : ""
+              }`}
+              aria-disabled={showActivationOverlay}
+            >
               <div className="font-medium">What next?</div>
               <p className="mt-1 text-sm text-neutral-300">{TIER_COPY[tier].blurb}</p>
 

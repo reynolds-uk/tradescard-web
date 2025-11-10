@@ -4,13 +4,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
+
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import PrimaryButton from "@/components/PrimaryButton";
-import { useMe } from "@/lib/useMe";
-import { useMeReady } from "@/lib/useMeReady";
 import { routeToJoin } from "@/lib/routeToJoin";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
+
+// NEW: shared data hooks
+import { useSessionUser, useProfile, useMember } from "@/lib/data";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -18,17 +20,6 @@ const API_BASE =
   "https://tradescard-api.vercel.app";
 
 type Tier = "access" | "member" | "pro";
-
-type ApiAccount = {
-  user_id: string;
-  email: string;
-  full_name?: string | null;
-  members: null | {
-    status: "active" | "trialing" | "past_due" | "canceled" | "free" | string;
-    tier: Tier | string;
-    current_period_end: string | null;
-  };
-};
 
 type MeView = {
   user_id: string;
@@ -67,13 +58,33 @@ function Badge({
   return <span className={`rounded px-2 py-0.5 text-xs ${map[tone]}`}>{children}</span>;
 }
 
+// Safe email masker (fixes previous "u possibly undefined" build error)
+const maskEmail = (e?: string | null) => {
+  if (!e) return "—";
+  const [u = "", d = ""] = e.split("@");
+  const maskedUser = u.length <= 2 ? (u.charAt(0) ? `${u.charAt(0)}…` : "…") : `${u.slice(0, 2)}…${u.slice(-1)}`;
+  return `${maskedUser}@${d}`;
+};
+
 export default function AccountPage() {
-  const me = useMe(); // { user?, email?, tier, status? }
-  const ready = useMeReady();
+  // Session + data via shared hooks
+  const { data: me } = useSessionUser(); // { id, email, created_at } or null
+  const userId = me?.id ?? null;
+  const { data: profile } = useProfile(userId); // { email, name, phone, ... } or null
+  const { data: member } = useMember(userId);   // { tier, status, current_period_end } or null
+
   const params = useSearchParams();
 
-  const showTrial = shouldShowTrial(me);
-  const isSignedIn = !!me?.user;
+  // Derived UI flags
+  const tier: Tier = (member?.tier as Tier) ?? "access";
+  const status = member?.status ?? "free";
+  const renewal = member?.current_period_end ?? null;
+  const showTrial = shouldShowTrial({ tier } as any);
+  const isSignedIn = !!userId;
+
+  // Minimal "ready" once we've computed initial values on client
+  const [ready, setReady] = useState(false);
+  useEffect(() => setReady(true), []);
 
   // Supabase only for signOut()
   const supabase = useMemo(
@@ -85,7 +96,6 @@ export default function AccountPage() {
     []
   );
 
-  const abortRef = useRef<AbortController | null>(null);
   const actionsRef = useRef<HTMLDivElement | null>(null);
 
   const [view, setView] = useState<MeView | null>(null);
@@ -94,58 +104,51 @@ export default function AccountPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  // NEW: pending activation (after Stripe, before sign-in)
+  // Pending activation (after Stripe, before sign-in)
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
   const [resendInfo, setResendInfo] = useState<string>("");
 
   const [pulseActions, setPulseActions] = useState(false);
 
-  const mapToView = (a: ApiAccount, joined_at?: string | null): MeView => ({
-    user_id: a.user_id,
-    email: a.email,
-    name: a.full_name ?? null,
-    tier: ((a.members?.tier as Tier) ?? "access") as Tier,
-    status: a.members?.status ?? "free",
-    renewal_date: a.members?.current_period_end ?? null,
-    joined_at: joined_at ?? null,
-  });
-
-  async function fetchEverything() {
-    setError("");
-    abortRef.current?.abort();
-    abortRef.current = new AbortController();
-
-    const uid = me?.user?.id;
-    if (!uid) {
+  // Build the simple view model from hooks
+  useEffect(() => {
+    if (!userId) {
       setView(null);
-      setRewards(null);
       return;
     }
+    setView({
+      user_id: userId,
+      email: profile?.email || "",
+      name: profile?.name ?? null,
+      tier,
+      status,
+      renewal_date: renewal,
+      joined_at: me?.created_at || null,
+    });
+  }, [userId, profile?.email, profile?.name, tier, status, renewal, me?.created_at]);
 
-    const accRes = await fetch(
-      `${API_BASE}/api/account?user_id=${encodeURIComponent(uid)}`,
-      { cache: "no-store", signal: abortRef.current.signal }
-    );
-    if (!accRes.ok) throw new Error(`/api/account failed: ${accRes.status}`);
-    const acc: ApiAccount = await accRes.json();
-    setView(mapToView(acc, (me?.user as { created_at?: string })?.created_at ?? null));
-
-    const rw = await fetch(
-      `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(uid)}`,
-      { cache: "no-store", signal: abortRef.current.signal }
-    );
-    if (rw.ok) {
-      const sum: RewardsSummary = await rw.json();
-      setRewards({
-        lifetime_points: Number.isFinite(sum.lifetime_points) ? sum.lifetime_points : 0,
-        points_this_month: Number.isFinite(sum.points_this_month) ? sum.points_this_month : 0,
-      });
-    } else {
+  // Rewards summary from API (only when signed in)
+  const loadRewards = async (uid: string) => {
+    try {
+      const rw = await fetch(
+        `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(uid)}`,
+        { cache: "no-store" }
+      );
+      if (rw.ok) {
+        const sum: RewardsSummary = await rw.json();
+        setRewards({
+          lifetime_points: Number.isFinite(sum.lifetime_points) ? sum.lifetime_points : 0,
+          points_this_month: Number.isFinite(sum.points_this_month) ? sum.points_this_month : 0,
+        });
+      } else {
+        setRewards(null);
+      }
+    } catch {
       setRewards(null);
     }
-  }
+  };
 
-  // Clean noisy params + detect pending activation
+  // Initial load / pending-activation detection
   useEffect(() => {
     if (!ready) return;
 
@@ -153,9 +156,7 @@ export default function AccountPage() {
       try {
         setLoading(true);
 
-        // Look for pending signals:
-        // - session_id from Stripe (preferred, we can resolve to email)
-        // - pending_email from earlier flows as a fallback
+        // Look for a pending session (just returned from Stripe but not signed in yet)
         const sessionId = params.get("session_id");
         const fallbackEmail = params.get("pending_email");
 
@@ -175,7 +176,7 @@ export default function AccountPage() {
 
             if (email) {
               setPendingEmail(email);
-              // Strip noise from the URL
+              // Clean URL
               try {
                 const url = new URL(window.location.href);
                 ["session_id", "pending_email", "status", "success", "canceled", "auth_error", "error", "error_code"].forEach(
@@ -189,9 +190,9 @@ export default function AccountPage() {
           }
         }
 
-        // If signed in, load the usual account view
-        if (isSignedIn) {
-          await fetchEverything();
+        // If signed in, load rewards
+        if (isSignedIn && userId) {
+          await loadRewards(userId);
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Something went wrong");
@@ -199,10 +200,8 @@ export default function AccountPage() {
         setLoading(false);
       }
     })();
-
-    return () => abortRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, isSignedIn, me?.user?.id]);
+  }, [ready, isSignedIn, userId]);
 
   // Spotlight actions if arriving from an upgrade path
   useEffect(() => {
@@ -219,7 +218,7 @@ export default function AccountPage() {
     try {
       setBusy(true);
       setError("");
-      if (!me?.user) {
+      if (!userId) {
         routeToJoin(plan);
         return;
       }
@@ -227,8 +226,8 @@ export default function AccountPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: me.user.id,
-          email: me.email,
+          user_id: userId,
+          email: profile?.email,
           plan,
           trial: showTrial,
           next: "/welcome",
@@ -249,14 +248,14 @@ export default function AccountPage() {
     try {
       setBusy(true);
       setError("");
-      if (!me?.user) {
+      if (!userId) {
         routeToJoin();
         return;
       }
       const res = await fetch(`${API_BASE}/api/stripe/portal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: me.user.id }),
+        body: JSON.stringify({ user_id: userId }),
       });
       const json = await res.json().catch(() => ({} as { url?: string; error?: string }));
       if (!res.ok || !json?.url) throw new Error(json?.error || `Portal failed (${res.status})`);
@@ -279,7 +278,7 @@ export default function AccountPage() {
   const refresh = async () => {
     try {
       setLoading(true);
-      await fetchEverything();
+      if (userId) await loadRewards(userId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Refresh failed");
     } finally {
@@ -287,7 +286,6 @@ export default function AccountPage() {
     }
   };
 
-  // Resend magic link (pending activation state)
   const resendMagicLink = async () => {
     if (!pendingEmail) return;
     try {
@@ -298,7 +296,7 @@ export default function AccountPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: pendingEmail,
-          redirect_to: "/welcome", // when they click the link
+          redirect_to: "/welcome",
         }),
       });
       if (!res.ok) throw new Error(`Resend failed (${res.status})`);
@@ -310,13 +308,12 @@ export default function AccountPage() {
     }
   };
 
-  // UI helpers
-  const statusBadge = (status: string) => {
-    if (status === "active") return <Badge tone="ok">active</Badge>;
-    if (status === "trialing") return <Badge tone="warn">trialing</Badge>;
-    if (status === "past_due") return <Badge tone="bad">past due</Badge>;
-    if (status === "canceled") return <Badge tone="muted">canceled</Badge>;
-    return <Badge tone="muted">{status}</Badge>;
+  const statusBadge = (s: string) => {
+    if (s === "active") return <Badge tone="ok">active</Badge>;
+    if (s === "trialing") return <Badge tone="warn">trialing</Badge>;
+    if (s === "past_due") return <Badge tone="bad">past due</Badge>;
+    if (s === "canceled") return <Badge tone="muted">canceled</Badge>;
+    return <Badge tone="muted">{s}</Badge>;
   };
 
   const prettyDate = (iso?: string | null) =>
@@ -346,24 +343,6 @@ export default function AccountPage() {
   };
 
   const showSticky = ready && !loading && view && (canJoin || canUpgrade || canDowngrade);
-
-  // Replace the existing maskEmail with this
-const maskEmail = (e?: string | null) => {
-  if (!e) return "—";
-  const parts = e.split("@");
-  if (parts.length < 2) return e;
-
-  const u = parts[0] || "";
-  const d = parts[1] || "";
-
-  // build a simple masked user part
-  const maskedUser =
-    u.length <= 2
-      ? (u.charAt(0) ? u.charAt(0) + "…" : "…")
-      : `${u.slice(0, 2)}…${u.slice(-1)}`;
-
-  return `${maskedUser}@${d}`;
-};
 
   return (
     <>
@@ -416,7 +395,7 @@ const maskEmail = (e?: string | null) => {
           </div>
         )}
 
-        {/* NEW: Logged out + pending activation cue */}
+        {/* Logged out + pending activation cue */}
         {ready && !loading && !isSignedIn && pendingEmail && (
           <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-5">
             <p className="font-medium">Please activate your account</p>
@@ -594,7 +573,7 @@ const maskEmail = (e?: string | null) => {
               {canUpgrade && (
                 <div className="flex flex-wrap gap-2">
                   <PrimaryButton onClick={() => startMembership("pro")} disabled={busy}>
-                    {busy ? "Opening…" : upgradeToProCta}
+                    {busy ? "Opening…" : "Upgrade to Pro"}
                   </PrimaryButton>
                   <button
                     onClick={openBillingPortal}
