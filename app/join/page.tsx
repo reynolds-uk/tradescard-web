@@ -46,13 +46,14 @@ export default function JoinPage() {
   const [tab, setTab] = useState<"join" | "signin">("join");
   const [cycle, setCycle] = useState<Cycle>("month");
 
-  // selection
+  // selection & visibility
   const [selectedPlan, setSelectedPlan] = useState<PaidPlan>("member");
-  const [openInline, setOpenInline] = useState<null | PaidPlan>(null);
+  const [openInline, setOpenInline] = useState<null | PaidPlan>(null); // nothing open by default
   const [freeOpen, setFreeOpen] = useState(false);
 
-  // email
-  const [emailPaid, setEmailPaid] = useState("");
+  // email states – per plan
+  const [memberEmail, setMemberEmail] = useState("");
+  const [proEmail, setProEmail] = useState("");
   const [emailFree, setEmailFree] = useState("");
 
   // ux
@@ -62,17 +63,18 @@ export default function JoinPage() {
   const [busy, setBusy] = useState(false);
   const [checkoutError, setCheckoutError] = useState("");
 
-  // refs
-  const paidInputRef = useRef<HTMLInputElement>(null);
-  const freeInputRef = useRef<HTMLInputElement>(null);
+  // refs – per plan
+  const memberRef = useRef<HTMLInputElement>(null);
+  const proRef = useRef<HTMLInputElement>(null);
+  const freeRef = useRef<HTMLInputElement>(null);
   const bootstrapped = useRef(false);
 
-  // supabase
   const supabase = useMemo(
-    () => createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    ),
+    () =>
+      createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      ),
     []
   );
 
@@ -92,13 +94,13 @@ export default function JoinPage() {
 
     if (qPlan === "member" || qPlan === "pro") {
       setSelectedPlan(qPlan);
-      setOpenInline(null); // nothing open by default
+      setOpenInline(null); // start closed
     }
 
     if (qFree === "1") {
       setFreeOpen(true);
       setOpenInline(null);
-      queueMicrotask(() => freeInputRef.current?.focus());
+      queueMicrotask(() => freeRef.current?.focus());
     }
 
     const err = params.get("error") || params.get("error_code");
@@ -121,12 +123,17 @@ export default function JoinPage() {
     const url = new URL(window.location.href);
     url.searchParams.set("mode", tab === "signin" ? "signin" : "join");
     window.history.replaceState({}, "", url.toString());
-    // close all inline inputs when switching tab
     setOpenInline(null);
     setFreeOpen(false);
   }, [tab]);
 
-  // ----- helpers -----
+  // focus the correct input when opening a plan
+  useEffect(() => {
+    if (openInline === "member") queueMicrotask(() => memberRef.current?.focus());
+    if (openInline === "pro") queueMicrotask(() => proRef.current?.focus());
+  }, [openInline]);
+
+  // helpers
   const isValidEmail = (v: string) => /^\S+@\S+\.\S+$/.test(v.trim());
 
   async function sendMagicLink(targetEmail: string, redirectTo: string) {
@@ -167,7 +174,6 @@ export default function JoinPage() {
     }
   }
 
-  // free access flow
   async function handleFreeJoin() {
     setInfo("");
     try {
@@ -183,42 +189,43 @@ export default function JoinPage() {
           ? "Enter a valid email to get your sign-in link."
           : "We couldn’t send the link just now. Please try again."
       );
-      freeInputRef.current?.focus();
+      freeRef.current?.focus();
     } finally {
       setSending(false);
     }
   }
 
-  // choose a paid plan: if logged-out, open inline email; if logged-in, go to Stripe
+  // picking a plan
   async function choose(plan: PaidPlan) {
     setInfo("");
     setSelectedPlan(plan);
     setFreeOpen(false);
+    setOpenInline(plan);
 
     const { data } = await supabase.auth.getSession();
-    if (!data?.session?.user) {
-      setOpenInline(plan);
-      queueMicrotask(() => paidInputRef.current?.focus());
-      return;
+    if (data?.session?.user) {
+      // already signed in → go to Stripe directly
+      await startPaidCheckout(plan);
     }
-    await startPaidCheckout(plan);
   }
 
-  // submit inline paid email → magic link back to /join, then Stripe auto-starts on return
+  // submit paid inline email → magic link back to /join, then Stripe on return
   async function handlePaidContinue() {
     if (!openInline) return;
     setInfo("");
     try {
-      if (!isValidEmail(emailPaid)) throw new Error("Enter a valid email address.");
+      const email = openInline === "member" ? memberEmail : proEmail;
+      if (!isValidEmail(email)) throw new Error("Enter a valid email address.");
       const redirect = `/join?plan=${openInline}&cycle=${cycle}`;
       setSending(true);
-      await sendMagicLink(emailPaid, redirect);
+      await sendMagicLink(email, redirect);
       setSent(true);
       setInfo("We’ve sent you a secure sign-in link. Open it to continue to payment.");
     } catch (e: any) {
       setSent(false);
       setCheckoutError(e?.message || "We couldn’t start checkout. Please try again.");
-      paidInputRef.current?.focus();
+      if (openInline === "member") memberRef.current?.focus();
+      if (openInline === "pro") proRef.current?.focus();
     } finally {
       setSending(false);
     }
@@ -246,7 +253,6 @@ export default function JoinPage() {
       : `Continue — ${yearlyLabel}`;
   const showSticky = tab === "join" && openInline === null;
 
-  // small UI bits
   function CycleTabs() {
     return (
       <div className="mb-4 inline-flex items-center gap-2">
@@ -324,20 +330,19 @@ export default function JoinPage() {
         ? `Choose Member – ${price}`
         : `Choose Pro – ${price}`;
 
+    const ref = plan === "member" ? memberRef : proRef;
+    const value = plan === "member" ? memberEmail : proEmail;
+    const setValue = plan === "member" ? setMemberEmail : setProEmail;
+
     return (
-      <div
-        className={`rounded-2xl border ${accentCls} bg-neutral-900 p-4`}
-        onClick={() => { setSelectedPlan(plan); setOpenInline(plan); setFreeOpen(false); }}
-        role="group"
-        aria-label={`${title} plan`}
-      >
+      <div className={`rounded-2xl border ${accentCls} bg-neutral-900 p-4`} role="group" aria-label={`${title} plan`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <button
               type="button"
               aria-pressed={selected}
               aria-label={`Select ${title}`}
-              onClick={(e) => { e.stopPropagation(); setSelectedPlan(plan); setOpenInline(plan); setFreeOpen(false); }}
+              onClick={() => { setSelectedPlan(plan); setOpenInline(plan); setFreeOpen(false); }}
               className={`relative inline-flex h-5 w-5 items-center justify-center rounded-full border ${
                 selected ? "border-white" : "border-neutral-500"
               }`}
@@ -362,24 +367,22 @@ export default function JoinPage() {
           ))}
         </ul>
 
-        {/* Keep the input MOUNTED at all times; hide/show with classes */}
-        <div className={`mt-4 grid gap-2 sm:grid-cols-[1fr_auto] transition-all duration-200
-                        ${isOpen ? "opacity-100" : "opacity-0 pointer-events-none max-h-0 sm:max-h-0"}`}
-             onClick={(e) => e.stopPropagation()}>
+        {/* Inline email (kept mounted; hidden when closed) */}
+        <div className={`mt-4 grid gap-2 sm:grid-cols-[1fr_auto] ${!isOpen ? "hidden" : ""}`}>
           <label htmlFor={`email-${plan}`} className="sr-only">Email address</label>
           <input
             id={`email-${plan}`}
-            ref={paidInputRef}
+            ref={ref}
             type="email"
             inputMode="email"
             placeholder="you@example.com"
             autoComplete="email"
-            value={emailPaid}
-            onChange={(e) => setEmailPaid(e.target.value)}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
             onKeyDown={onEnter(handlePaidContinue)}
             className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
           />
-          <PrimaryButton onClick={(e) => { e.stopPropagation(); handlePaidContinue(); }} disabled={sending}>
+          <PrimaryButton onClick={handlePaidContinue} disabled={sending}>
             {sending ? "Sending link…" : "Continue to payment"}
           </PrimaryButton>
           <p className="col-span-full text-xs text-neutral-500">
@@ -387,10 +390,10 @@ export default function JoinPage() {
           </p>
         </div>
 
-        {/* The visible CTA when the inline input is closed */}
+        {/* Primary CTA when closed */}
         {!isOpen && (
           <PrimaryButton
-            onClick={(e) => { e.stopPropagation(); choose(plan); }}
+            onClick={() => { setSelectedPlan(plan); setOpenInline(plan); setFreeOpen(false); }}
             disabled={busy || sending}
             className="mt-4 w-full"
           >
@@ -403,23 +406,28 @@ export default function JoinPage() {
 
   return (
     <>
-      {showSticky && (
+      {/* Sticky summary CTA (mobile) */}
+      {tab === "join" && openInline === null && (
         <div className="fixed inset-x-0 bottom-0 z-40 md:hidden border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70" role="region" aria-label="Selected plan summary">
           <div className="safe-inset-bottom" />
           <div className="mx-auto max-w-5xl px-4 py-3">
-            <PrimaryButton onClick={() => choose(selectedPlan)} disabled={busy || sending} className="w-full text-base py-3">
-              {stickyLabel}
+            <PrimaryButton onClick={() => { setOpenInline(selectedPlan); setFreeOpen(false); }} disabled={busy || sending} className="w-full text-base py-3">
+              {selectedPlan === "member" && cycle === "month" && showTrial ? TRIAL_COPY : (cycle === "month" ? `Continue — ${fmtMonth(PRICE[selectedPlan].month)}` : `Continue — ${fmtYear(PRICE[selectedPlan].year)}`)}
             </PrimaryButton>
             <div className="mt-2 text-center text-[11px] text-neutral-400">
               {cycle === "year"
-                ? `${fmtMonth(PRICE[selectedPlan].month)} equivalent • ${mFree > 0 ? `${mFree} months free` : "Save vs monthly"}`
+                ? `${fmtMonth(PRICE[selectedPlan].month)} equivalent • ${
+                    monthsFree(PRICE[selectedPlan].month, PRICE[selectedPlan].year).months > 0
+                      ? `${monthsFree(PRICE[selectedPlan].month, PRICE[selectedPlan].year).months} months free`
+                      : "Save vs monthly"
+                  }`
                 : `Billed monthly • Cancel any time`}
             </div>
           </div>
         </div>
       )}
 
-      <Container className={showSticky ? "safe-bottom-pad" : ""}>
+      <Container className={tab === "join" && openInline === null ? "safe-bottom-pad" : ""}>
         <PageHeader
           title="The card for the people who build Britain"
           subtitle={
@@ -431,14 +439,8 @@ export default function JoinPage() {
         />
 
         <div role="tablist" aria-label="Join or sign in" className="mb-3 inline-flex rounded-xl border border-neutral-800 p-1">
-          <button role="tab" aria-selected={tab === "join"} onClick={() => setTab("join")}
-            className={`px-3 py-1.5 text-sm rounded-lg ${tab === "join" ? "bg-neutral-800" : "hover:bg-neutral-900"}`}>
-            Join
-          </button>
-          <button role="tab" aria-selected={tab === "signin"} onClick={() => setTab("signin")}
-            className={`px-3 py-1.5 text-sm rounded-lg ${tab === "signin" ? "bg-neutral-800" : "hover:bg-neutral-900"}`}>
-            Sign in
-          </button>
+          <button role="tab" aria-selected={tab === "join"} onClick={() => setTab("join")} className={`px-3 py-1.5 text-sm rounded-lg ${tab === "join" ? "bg-neutral-800" : "hover:bg-neutral-900"}`}>Join</button>
+          <button role="tab" aria-selected={tab === "signin"} onClick={() => setTab("signin")} className={`px-3 py-1.5 text-sm rounded-lg ${tab === "signin" ? "bg-neutral-800" : "hover:bg-neutral-900"}`}>Sign in</button>
         </div>
 
         {tab === "join" && <CycleTabs />}
@@ -491,7 +493,7 @@ export default function JoinPage() {
 
                 {!freeOpen ? (
                   <PrimaryButton
-                    onClick={() => { setFreeOpen(true); setOpenInline(null); queueMicrotask(() => freeInputRef.current?.focus()); }}
+                    onClick={() => { setFreeOpen(true); setOpenInline(null); queueMicrotask(() => freeRef.current?.focus()); }}
                     className="self-start md:self-auto"
                   >
                     Join free
@@ -501,7 +503,7 @@ export default function JoinPage() {
                     <label htmlFor="email-access" className="sr-only">Email address</label>
                     <input
                       id="email-access"
-                      ref={freeInputRef}
+                      ref={freeRef}
                       type="email"
                       inputMode="email"
                       placeholder="you@example.com"
@@ -532,7 +534,7 @@ export default function JoinPage() {
               <label htmlFor="email-signin" className="sr-only">Email address</label>
               <input
                 id="email-signin"
-                ref={freeInputRef}
+                ref={freeRef}
                 type="email"
                 inputMode="email"
                 placeholder="you@example.com"
