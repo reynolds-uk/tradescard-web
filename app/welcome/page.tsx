@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
 import Container from "@/components/Container";
@@ -41,6 +41,156 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ??
   "https://tradescard-api.vercel.app";
 
+/* -------------------------------------------------------------------------------------------------
+   Hook: confirm checkout once (handles ?cs=..., sends OTP if user not signed in)
+-------------------------------------------------------------------------------------------------- */
+function useConfirmCheckoutOnce() {
+  const params = useSearchParams();
+  const router = useRouter();
+
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Activation overlay state
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+  const [pendingInfo, setPendingInfo] = useState<string>("");
+  const [resending, setResending] = useState(false);
+  const [countdown, setCountdown] = useState(0); // seconds
+
+  const supabase = useMemo(
+    () =>
+      createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      ),
+    []
+  );
+
+  // Confirm once
+  const ran = useRef(false);
+  useEffect(() => {
+    const cs = params.get("cs");
+    if (!cs || ran.current) return;
+    ran.current = true;
+
+    (async () => {
+      try {
+        setBusy(true);
+        setErr(null);
+
+        const res = await fetch(
+          `${API_BASE}/api/confirm-checkout?cs=${encodeURIComponent(cs)}`,
+          { credentials: "include" }
+        );
+
+        if (res.status === 401) {
+          // Not signed in yet — fetch email from Stripe session and send the magic link
+          setPendingInfo("Finalising your membership…");
+          const s = await fetch(
+            `${API_BASE}/api/checkout/session?session_id=${encodeURIComponent(cs)}`
+          );
+          if (!s.ok) throw new Error("Could not retrieve checkout session details.");
+          const { email } = (await s.json()) as { email?: string };
+          if (!email) throw new Error("We couldn't determine your email for activation.");
+
+          setPendingEmail(email);
+
+          // Send initial magic link and start 30s cooldown
+          const { error: otpErr } = await supabase.auth.signInWithOtp({
+            email,
+            options: { emailRedirectTo: new URL("/welcome", APP_URL).toString() },
+          });
+          if (otpErr) throw otpErr;
+
+          setPendingInfo(
+            "We’ve emailed you a secure sign-in link. Open it to activate your account."
+          );
+          setCountdown(30);
+          return;
+        }
+
+        const data = await res.json();
+
+        if (data?.ok) {
+          track("welcome_view", { confirmed: true });
+          // Drop the ?cs= param and refresh data
+          router.replace("/welcome");
+          router.refresh?.();
+          return;
+        }
+
+        if (data?.pending) {
+          // Payment not settled yet; keep page as-is (your existing copy covers it)
+          track("welcome_view", { pending: true });
+          return;
+        }
+
+        if (data?.error) {
+          setErr(data.error);
+        } else {
+          setErr("We couldn’t confirm your membership.");
+        }
+      } catch (e: any) {
+        setErr(e?.message || "Network error confirming checkout.");
+      } finally {
+        setBusy(false);
+      }
+    })();
+  }, [params, router, supabase]);
+
+  // Cooldown tick
+  useEffect(() => {
+    if (countdown <= 0) return;
+    const t = setInterval(() => setCountdown((c) => (c > 0 ? c - 1 : 0)), 1000);
+    return () => clearInterval(t);
+  }, [countdown]);
+
+  // Resend magic link
+  const resend = async () => {
+    if (!pendingEmail || countdown > 0 || resending) return;
+    setResending(true);
+    setCountdown(30);
+    try {
+      const { error: otpErr } = await supabase.auth.signInWithOtp({
+        email: pendingEmail,
+        options: { emailRedirectTo: new URL("/welcome", APP_URL).toString() },
+      });
+      if (otpErr) throw otpErr;
+    } catch {
+      setCountdown(0);
+    } finally {
+      setResending(false);
+    }
+  };
+
+  // If overlay is visible, lock scroll
+  const showActivationOverlay = !!pendingEmail;
+  useEffect(() => {
+    if (!showActivationOverlay) return;
+    const { body } = document;
+    const prev = body.style.overflow;
+    body.style.overflow = "hidden";
+    return () => {
+      body.style.overflow = prev;
+    };
+  }, [showActivationOverlay]);
+
+  return {
+    busy,
+    err,
+    showActivationOverlay,
+    pendingEmail,
+    pendingInfo,
+    resend,
+    resending,
+    countdown,
+    canResend: countdown === 0 && !!pendingEmail,
+  };
+}
+
+/* -------------------------------------------------------------------------------------------------
+   Page
+-------------------------------------------------------------------------------------------------- */
 export default function WelcomePage() {
   // SESSION + DATA
   const { data: me } = useSessionUser();
@@ -52,6 +202,7 @@ export default function WelcomePage() {
   const showTrial = shouldShowTrial({ tier } as any);
 
   const params = useSearchParams();
+  const router = useRouter();
 
   const supabase = useMemo(
     () =>
@@ -61,6 +212,19 @@ export default function WelcomePage() {
       ),
     []
   );
+
+  // Confirm checkout if `?cs=...`
+  const {
+    busy,
+    err,
+    showActivationOverlay,
+    pendingEmail,
+    pendingInfo,
+    resend,
+    resending,
+    countdown,
+    canResend,
+  } = useConfirmCheckoutOnce();
 
   // Form state (schema has no phone column)
   const [name, setName] = useState("");
@@ -72,12 +236,6 @@ export default function WelcomePage() {
   const [copied, setCopied] = useState(false);
   const accessCta = showTrial ? TRIAL_COPY : "Become a Member (£2.99/mo)";
 
-  // Activation overlay state
-  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
-  const [pendingInfo, setPendingInfo] = useState<string>("");
-  const [resending, setResending] = useState(false);
-  const [countdown, setCountdown] = useState(0); // seconds
-
   // Prefill once profile lands
   useEffect(() => {
     if (!profile) return;
@@ -85,6 +243,28 @@ export default function WelcomePage() {
   }, [profile]);
 
   const maskedId = (id?: string) => (id ? `${id.slice(0, 6)}…${id.slice(-4)}` : "—");
+
+  // “Resume checkout” if they came back with continue=1 and still on Access
+  const wantedPlan = (params.get("plan") as "member" | "pro" | null) || null;
+  const wantedCycle = (params.get("cycle") as "month" | "year" | null) || null;
+  const showResume =
+    params.get("continue") === "1" && tier === "access" && wantedPlan && wantedCycle;
+
+  async function resumeCheckout() {
+    try {
+      const res = await fetch(`${API_BASE}/api/checkout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ plan: wantedPlan, cycle: wantedCycle }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.url) throw new Error(data?.error || "Could not start checkout.");
+      window.location.href = data.url;
+    } catch (e) {
+      // no-op: you may want to surface a toast
+    }
+  }
 
   function goJoin(plan: "member" | "pro") {
     try {
@@ -140,107 +320,6 @@ export default function WelcomePage() {
     window.location.href = tier === "access" ? "/offers" : "/account";
   }
 
-  // Handle checkout return → show activation overlay and send first magic link
-  useEffect(() => {
-    const sessionId = params.get("session_id");
-    const pending = params.get("pending") === "1";
-    if (!sessionId || !pending || userId) return; // only for not-signed-in return
-
-    (async () => {
-      try {
-        setPendingInfo("Finalising your membership…");
-        const res = await fetch(
-          `${API_BASE}/api/claim?session_id=${encodeURIComponent(sessionId)}`
-        );
-        if (!res.ok) throw new Error("Could not retrieve checkout session");
-        const { email } = (await res.json()) as { email?: string };
-        if (!email) throw new Error("No email returned for session");
-        setPendingEmail(email);
-
-        // Send initial magic link and start 30s cooldown
-        const { error: otpErr } = await supabase.auth.signInWithOtp({
-          email,
-          options: { emailRedirectTo: new URL("/welcome", APP_URL).toString() },
-        });
-        if (otpErr) throw otpErr;
-
-        setPendingInfo(
-          "We’ve emailed you a secure sign-in link. Open it to activate your account."
-        );
-        setCountdown(30);
-      } catch (e: any) {
-        setPendingInfo(
-          e?.message || "We couldn’t start activation automatically. Please check your email."
-        );
-        setCountdown(0);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params, userId]);
-
-  // After the user signs in (overlay goes away), finalise Stripe→Supabase link (idempotent)
-  const finalisedRef = useRef(false);
-  useEffect(() => {
-    if (finalisedRef.current) return;
-    const sessionId = params.get("session_id");
-    const pending = params.get("pending") === "1";
-    if (!userId || !sessionId || !pending) return;
-
-    finalisedRef.current = true;
-    (async () => {
-      try {
-        await fetch(`${API_BASE}/api/link-subscription-by-email`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id: userId, session_id: sessionId }),
-        });
-        // UI will naturally re-render as hooks refetch (or on focus)
-      } catch {
-        // non-blocking; user still signed in as ACCESS until next refetch
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, params]);
-
-  // Cooldown tick
-  useEffect(() => {
-    if (countdown <= 0) return;
-    const t = setInterval(() => setCountdown((c) => (c > 0 ? c - 1 : 0)), 1000);
-    return () => clearInterval(t);
-  }, [countdown]);
-
-  // Resend magic link
-  const resend = async () => {
-    if (!pendingEmail || countdown > 0 || resending) return;
-    setResending(true);
-    setCountdown(30);
-    try {
-      const { error: otpErr } = await supabase.auth.signInWithOtp({
-        email: pendingEmail,
-        options: { emailRedirectTo: new URL("/welcome", APP_URL).toString() },
-      });
-      if (otpErr) throw otpErr;
-    } catch {
-      setCountdown(0);
-    } finally {
-      setResending(false);
-    }
-  };
-
-  const canResend = countdown === 0 && !!pendingEmail;
-
-  // Lock scroll while overlay is visible
-  const showActivationOverlay = !userId && params.get("pending") === "1" && !!pendingEmail;
-  useEffect(() => {
-    if (!showActivationOverlay) return;
-    const { body } = document;
-    const prev = body.style.overflow;
-    body.style.overflow = "hidden";
-    return () => {
-      body.style.overflow = prev;
-    };
-  }, [showActivationOverlay]);
-
   return (
     <>
       {showActivationOverlay && pendingEmail && (
@@ -267,7 +346,35 @@ export default function WelcomePage() {
           }
         />
 
-        {showTrial && (
+        {/* Inline status from confirm step */}
+        {(busy || err || showResume) && (
+          <div className="mb-4 space-y-2">
+            {busy && (
+              <div className="rounded-lg border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-blue-200 text-sm">
+                Activating your membership…
+              </div>
+            )}
+            {err && (
+              <div className="rounded-lg border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300 text-sm">
+                {err}
+              </div>
+            )}
+            {showResume && (
+              <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-amber-200 text-sm">
+                You didn’t finish checkout.{" "}
+                <button
+                  onClick={resumeCheckout}
+                  className="underline decoration-dotted underline-offset-4 hover:opacity-90"
+                >
+                  Resume now
+                </button>
+                .
+              </div>
+            )}
+          </div>
+        )}
+
+        {shouldShowTrial({ tier } as any) && (
           <div className="mb-4 rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-200">
             Limited-time offer: {TRIAL_COPY}
           </div>
@@ -392,7 +499,10 @@ export default function WelcomePage() {
             {tier === "access" && (
               <button
                 type="button"
-                onClick={skipForNow}
+                onClick={() => {
+                  track("welcome_skip", { tier });
+                  router.push("/offers");
+                }}
                 className="rounded-xl border border-neutral-700 bg-neutral-900 px-4 py-2 text-sm font-medium hover:bg-neutral-800"
               >
                 Skip for now
