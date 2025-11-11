@@ -18,6 +18,7 @@ type Cycle = "month" | "year";
 const APP_URL =
   process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
 
+// Display prices (UI only)
 const PRICE = {
   member: { month: 2.99, year: 29.0 },
   pro: { month: 7.99, year: 79.0 },
@@ -30,8 +31,12 @@ const AUTH_ERROR_MAP: Record<string, string> = {
   server_error: "We had trouble verifying your link. Try again.",
 };
 
-function fmtMonth(v: number) { return `£${v.toFixed(2)}/mo`; }
-function fmtYear(v: number) { return `£${v.toFixed(2)}/yr`; }
+function fmtMonth(v: number) {
+  return `£${v.toFixed(2)}/mo`;
+}
+function fmtYear(v: number) {
+  return `£${v.toFixed(2)}/yr`;
+}
 function monthsFree(monthly: number, yearly: number) {
   const saved = monthly * 12 - yearly;
   const months = Math.round(saved / monthly);
@@ -40,35 +45,37 @@ function monthsFree(monthly: number, yearly: number) {
 
 export default function JoinPage() {
   const params = useSearchParams();
+
+  // Auth / promo context
   const me = useMe();
   const showTrial = shouldShowTrial(me);
 
+  // Tabs & cycle
   const [tab, setTab] = useState<"join" | "signin">("join");
   const [cycle, setCycle] = useState<Cycle>("month");
 
-  // selection & visibility
-  const [selectedPlan, setSelectedPlan] = useState<PaidPlan>("member");
-  const [openInline, setOpenInline] = useState<null | PaidPlan>(null); // nothing open by default
-  const [freeOpen, setFreeOpen] = useState(false);
+  // Which paid plan is selected and which is open inline
+  const [selectedPlan, setSelectedPlan] = useState<PaidPlan | null>(null);
+  const [openInline, setOpenInline] = useState<PaidPlan | null>(null);
 
-  // email states – per plan
-  const [memberEmail, setMemberEmail] = useState("");
-  const [proEmail, setProEmail] = useState("");
+  // Email states (separate per plan to avoid remount/focus loss)
+  const [emailMember, setEmailMember] = useState("");
+  const [emailPro, setEmailPro] = useState("");
   const [emailFree, setEmailFree] = useState("");
 
-  // ux
+  // UX flags
   const [info, setInfo] = useState("");
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
   const [busy, setBusy] = useState(false);
   const [checkoutError, setCheckoutError] = useState("");
 
-  // refs – per plan
-  const memberRef = useRef<HTMLInputElement>(null);
-  const proRef = useRef<HTMLInputElement>(null);
-  const freeRef = useRef<HTMLInputElement>(null);
+  // Refs
+  const paidInputRef = useRef<HTMLInputElement>(null);
+  const freeInputRef = useRef<HTMLInputElement>(null);
   const bootstrapped = useRef(false);
 
+  // Supabase client
   const supabase = useMemo(
     () =>
       createClient(
@@ -78,7 +85,9 @@ export default function JoinPage() {
     []
   );
 
-  // ---------- first-mount URL bootstrap ----------
+  /* --------------------------
+     Initialise from URL once
+  ---------------------------*/
   useEffect(() => {
     if (bootstrapped.current) return;
     bootstrapped.current = true;
@@ -92,17 +101,19 @@ export default function JoinPage() {
     if (mode === "join") setTab("join");
     if (qCycle === "year") setCycle("year");
 
+    // Select a plan from deep link, but don't open email until the user clicks
     if (qPlan === "member" || qPlan === "pro") {
       setSelectedPlan(qPlan);
-      setOpenInline(null); // start closed
+      setOpenInline(null);
     }
 
     if (qFree === "1") {
-      setFreeOpen(true);
+      // Explicitly open free inline (used in marketing links)
       setOpenInline(null);
-      queueMicrotask(() => freeRef.current?.focus());
+      queueMicrotask(() => freeInputRef.current?.focus());
     }
 
+    // Handle auth error messages
     const err = params.get("error") || params.get("error_code");
     if (err) {
       const key = err.toLowerCase();
@@ -110,30 +121,38 @@ export default function JoinPage() {
       setInfo(AUTH_ERROR_MAP[key] || "We couldn’t verify your link. Please request a new one.");
       try {
         const url = new URL(window.location.href);
-        ["error","error_code","error_description","status","success","canceled"].forEach(k => url.searchParams.delete(k));
+        ["error", "error_code", "error_description", "status", "success", "canceled"].forEach(
+          (k) => url.searchParams.delete(k)
+        );
         window.history.replaceState({}, "", url.pathname);
       } catch {}
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // keep URL in sync with tab
+  /* --------------------------
+     React to query changes
+  ---------------------------*/
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const url = new URL(window.location.href);
-    url.searchParams.set("mode", tab === "signin" ? "signin" : "join");
-    window.history.replaceState({}, "", url.toString());
-    setOpenInline(null);
-    setFreeOpen(false);
-  }, [tab]);
+    const mode = (params.get("mode") || params.get("tab") || "").toLowerCase();
+    const qFree = params.get("free");
+    const qCycle = (params.get("cycle") || "").toLowerCase() as "" | Cycle;
+    const qPlan = (params.get("plan") || "").toLowerCase() as "" | PaidPlan;
 
-  // focus the correct input when opening a plan
-  useEffect(() => {
-    if (openInline === "member") queueMicrotask(() => memberRef.current?.focus());
-    if (openInline === "pro") queueMicrotask(() => proRef.current?.focus());
-  }, [openInline]);
+    if (mode === "signin") setTab("signin");
+    else if (mode === "join") setTab("join");
 
-  // helpers
+    if (qCycle === "year") setCycle("year");
+    if (qPlan === "member" || qPlan === "pro") setSelectedPlan(qPlan);
+    if (qFree === "1") {
+      setOpenInline(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
+
+  /* --------------------------
+     Helpers / actions
+  ---------------------------*/
   const isValidEmail = (v: string) => /^\S+@\S+\.\S+$/.test(v.trim());
 
   async function sendMagicLink(targetEmail: string, redirectTo: string) {
@@ -150,15 +169,18 @@ export default function JoinPage() {
     try {
       setBusy(true);
       setCheckoutError("");
+
       const res = await fetch(`/api/checkout`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ plan, cycle }),
       });
+
       if (!res.ok) {
         const err = await res.json().catch(() => ({} as any));
         throw new Error(err?.error || "Unable to start checkout");
       }
+
       const { url } = (await res.json()) as { url?: string };
       if (!url) throw new Error("No checkout URL returned");
 
@@ -171,6 +193,35 @@ export default function JoinPage() {
       setCheckoutError(e?.message || "We couldn’t start checkout. Please try again.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function choose(plan: PaidPlan) {
+    setInfo("");
+    setSelectedPlan(plan);
+    setOpenInline(plan); // open only when the user chooses
+    queueMicrotask(() => paidInputRef.current?.focus());
+  }
+
+  async function handlePaidContinue() {
+    if (!openInline) return;
+    setInfo("");
+    try {
+      const targetEmail = openInline === "member" ? emailMember : emailPro;
+      if (!isValidEmail(targetEmail)) throw new Error("Enter a valid email address.");
+
+      // Send magic link that returns to this page with plan & cycle
+      const redirect = `/join?plan=${openInline}&cycle=${cycle}`;
+      setSending(true);
+      await sendMagicLink(targetEmail, redirect);
+      setSent(true);
+      setInfo("Check your inbox for your secure sign-in link to continue to payment.");
+    } catch (e: any) {
+      setSent(false);
+      setCheckoutError(e?.message || "We couldn’t start checkout. Please try again.");
+      paidInputRef.current?.focus();
+    } finally {
+      setSending(false);
     }
   }
 
@@ -189,70 +240,40 @@ export default function JoinPage() {
           ? "Enter a valid email to get your sign-in link."
           : "We couldn’t send the link just now. Please try again."
       );
-      freeRef.current?.focus();
+      freeInputRef.current?.focus();
     } finally {
       setSending(false);
     }
   }
 
-  // picking a plan
-  async function choose(plan: PaidPlan) {
-    setInfo("");
-    setSelectedPlan(plan);
-    setFreeOpen(false);
-    setOpenInline(plan);
+  const onEnter =
+    (fn: () => void) => (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        fn();
+      }
+    };
 
-    const { data } = await supabase.auth.getSession();
-    if (data?.session?.user) {
-      // already signed in → go to Stripe directly
-      await startPaidCheckout(plan);
-    }
-  }
+  /* --------------------------
+     Derived UI for sticky CTA
+  ---------------------------*/
+  const active = selectedPlan ?? "member";
+  const { months: mFree, saved } = monthsFree(PRICE[active].month, PRICE[active].year);
+  const monthlyLabel = fmtMonth(PRICE[active].month);
+  const yearlyLabel = fmtYear(PRICE[active].year);
 
-  // submit paid inline email → magic link back to /join, then Stripe on return
-  async function handlePaidContinue() {
-    if (!openInline) return;
-    setInfo("");
-    try {
-      const email = openInline === "member" ? memberEmail : proEmail;
-      if (!isValidEmail(email)) throw new Error("Enter a valid email address.");
-      const redirect = `/join?plan=${openInline}&cycle=${cycle}`;
-      setSending(true);
-      await sendMagicLink(email, redirect);
-      setSent(true);
-      setInfo("We’ve sent you a secure sign-in link. Open it to continue to payment.");
-    } catch (e: any) {
-      setSent(false);
-      setCheckoutError(e?.message || "We couldn’t start checkout. Please try again.");
-      if (openInline === "member") memberRef.current?.focus();
-      if (openInline === "pro") proRef.current?.focus();
-    } finally {
-      setSending(false);
-    }
-  }
-
-  const onEnter = (fn: () => void) => (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      fn();
-    }
-  };
-
-  // sticky CTA (mobile)
-  const { months: mFree, saved } = monthsFree(
-    PRICE[selectedPlan].month,
-    PRICE[selectedPlan].year
-  );
-  const monthlyLabel = fmtMonth(PRICE[selectedPlan].month);
-  const yearlyLabel = fmtYear(PRICE[selectedPlan].year);
   const stickyLabel =
-    selectedPlan === "member" && cycle === "month" && showTrial
+    active === "member" && cycle === "month" && showTrial
       ? TRIAL_COPY
       : cycle === "month"
       ? `Continue — ${monthlyLabel}`
       : `Continue — ${yearlyLabel}`;
-  const showSticky = tab === "join" && openInline === null;
 
+  const showSticky = tab === "join" && !openInline;
+
+  /* --------------------------
+     Small UI pieces
+  ---------------------------*/
   function CycleTabs() {
     return (
       <div className="mb-4 inline-flex items-center gap-2">
@@ -317,11 +338,16 @@ export default function JoinPage() {
     accent?: "pro" | "member";
     badge?: string;
   }) {
-    const price = cycle === "month" ? fmtMonth(PRICE[plan].month) : fmtYear(PRICE[plan].year);
-    const accentCls =
-      accent === "pro" ? "border-amber-400/30 ring-1 ring-amber-400/20" : "border-neutral-800";
+    const isInline = openInline === plan;
     const selected = selectedPlan === plan;
-    const isOpen = openInline === plan;
+
+    const price =
+      cycle === "month" ? fmtMonth(PRICE[plan].month) : fmtYear(PRICE[plan].year);
+
+    const accentCls =
+      accent === "pro"
+        ? "border-amber-400/30 ring-1 ring-amber-400/20"
+        : "border-neutral-800";
 
     const ctaLabel =
       plan === "member" && cycle === "month" && showTrial
@@ -330,19 +356,26 @@ export default function JoinPage() {
         ? `Choose Member – ${price}`
         : `Choose Pro – ${price}`;
 
-    const ref = plan === "member" ? memberRef : proRef;
-    const value = plan === "member" ? memberEmail : proEmail;
-    const setValue = plan === "member" ? setMemberEmail : setProEmail;
+    const openThisPlan = () => {
+      // Select & open inline; close other
+      setSelectedPlan(plan);
+      setOpenInline(plan);
+      setInfo("");
+      queueMicrotask(() => paidInputRef.current?.focus());
+    };
+
+    const emailValue = plan === "member" ? emailMember : emailPro;
+    const setEmail = plan === "member" ? setEmailMember : setEmailPro;
 
     return (
-      <div className={`rounded-2xl border ${accentCls} bg-neutral-900 p-4`} role="group" aria-label={`${title} plan`}>
+      <div className={`rounded-2xl border ${accentCls} bg-neutral-900 p-4`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <button
               type="button"
               aria-pressed={selected}
               aria-label={`Select ${title}`}
-              onClick={() => { setSelectedPlan(plan); setOpenInline(plan); setFreeOpen(false); }}
+              onClick={openThisPlan}
               className={`relative inline-flex h-5 w-5 items-center justify-center rounded-full border ${
                 selected ? "border-white" : "border-neutral-500"
               }`}
@@ -367,59 +400,65 @@ export default function JoinPage() {
           ))}
         </ul>
 
-        {/* Inline email (kept mounted; hidden when closed) */}
-        <div className={`mt-4 grid gap-2 sm:grid-cols-[1fr_auto] ${!isOpen ? "hidden" : ""}`}>
-          <label htmlFor={`email-${plan}`} className="sr-only">Email address</label>
-          <input
-            id={`email-${plan}`}
-            ref={ref}
-            type="email"
-            inputMode="email"
-            placeholder="you@example.com"
-            autoComplete="email"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={onEnter(handlePaidContinue)}
-            className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
-          />
-          <PrimaryButton onClick={handlePaidContinue} disabled={sending}>
-            {sending ? "Sending link…" : "Continue to payment"}
-          </PrimaryButton>
-          <p className="col-span-full text-xs text-neutral-500">
-            Enter your email, then we’ll take you to payment. After paying, check your inbox to confirm your account.
-          </p>
-        </div>
-
-        {/* Primary CTA when closed */}
-        {!isOpen && (
-          <PrimaryButton
-            onClick={() => { setSelectedPlan(plan); setOpenInline(plan); setFreeOpen(false); }}
-            disabled={busy || sending}
-            className="mt-4 w-full"
-          >
+        {!isInline ? (
+          <PrimaryButton onClick={openThisPlan} disabled={busy || sending} className="mt-4 w-full">
             {ctaLabel}
           </PrimaryButton>
+        ) : (
+          <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]">
+            <label htmlFor={`email-${plan}`} className="sr-only">
+              Email address
+            </label>
+            <input
+              id={`email-${plan}`}
+              ref={paidInputRef}
+              type="email"
+              inputMode="email"
+              placeholder="you@example.com"
+              autoComplete="email"
+              value={emailValue}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={onEnter(handlePaidContinue)}
+              className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
+            />
+            <PrimaryButton onClick={handlePaidContinue} disabled={sending}>
+              {sending ? "Sending link…" : "Continue to payment"}
+            </PrimaryButton>
+            <p className="col-span-full text-xs text-neutral-500">
+              Enter your email, then we’ll take you to payment. After paying, check your inbox to
+              confirm your account.
+            </p>
+          </div>
         )}
       </div>
     );
   }
 
+  /* --------------------------
+     Render
+  ---------------------------*/
   return (
     <>
       {/* Sticky summary CTA (mobile) */}
-      {tab === "join" && openInline === null && (
-        <div className="fixed inset-x-0 bottom-0 z-40 md:hidden border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70" role="region" aria-label="Selected plan summary">
+      {showSticky && (
+        <div
+          className="fixed inset-x-0 bottom-0 z-40 md:hidden border-t border-neutral-800 bg-neutral-950/95 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70"
+          role="region"
+          aria-label="Selected plan summary"
+        >
           <div className="safe-inset-bottom" />
           <div className="mx-auto max-w-5xl px-4 py-3">
-            <PrimaryButton onClick={() => { setOpenInline(selectedPlan); setFreeOpen(false); }} disabled={busy || sending} className="w-full text-base py-3">
-              {selectedPlan === "member" && cycle === "month" && showTrial ? TRIAL_COPY : (cycle === "month" ? `Continue — ${fmtMonth(PRICE[selectedPlan].month)}` : `Continue — ${fmtYear(PRICE[selectedPlan].year)}`)}
+            <PrimaryButton
+              onClick={() => selectedPlan && choose(selectedPlan)}
+              disabled={!selectedPlan || busy || sending}
+              className="w-full text-base py-3"
+            >
+              {stickyLabel}
             </PrimaryButton>
             <div className="mt-2 text-center text-[11px] text-neutral-400">
               {cycle === "year"
-                ? `${fmtMonth(PRICE[selectedPlan].month)} equivalent • ${
-                    monthsFree(PRICE[selectedPlan].month, PRICE[selectedPlan].year).months > 0
-                      ? `${monthsFree(PRICE[selectedPlan].month, PRICE[selectedPlan].year).months} months free`
-                      : "Save vs monthly"
+                ? `${fmtMonth(PRICE[active].month)} equivalent • ${
+                    mFree > 0 ? `${mFree} months free` : "Save vs monthly"
                   }`
                 : `Billed monthly • Cancel any time`}
             </div>
@@ -427,7 +466,7 @@ export default function JoinPage() {
         </div>
       )}
 
-      <Container className={tab === "join" && openInline === null ? "safe-bottom-pad" : ""}>
+      <Container className={showSticky ? "safe-bottom-pad" : ""}>
         <PageHeader
           title="The card for the people who build Britain"
           subtitle={
@@ -435,28 +474,69 @@ export default function JoinPage() {
               ? "A simple membership for the trade — offers that cut everyday costs, benefits you’ll actually use, and monthly rewards."
               : "Sign in securely with a magic link. No password needed."
           }
-          aside={tab === "join" && showTrial ? <span className="promo-chip promo-chip-xs-hide">{TRIAL_COPY}</span> : undefined}
+          aside={
+            tab === "join" && showTrial ? (
+              <span className="promo-chip promo-chip-xs-hide">{TRIAL_COPY}</span>
+            ) : undefined
+          }
         />
 
-        <div role="tablist" aria-label="Join or sign in" className="mb-3 inline-flex rounded-xl border border-neutral-800 p-1">
-          <button role="tab" aria-selected={tab === "join"} onClick={() => setTab("join")} className={`px-3 py-1.5 text-sm rounded-lg ${tab === "join" ? "bg-neutral-800" : "hover:bg-neutral-900"}`}>Join</button>
-          <button role="tab" aria-selected={tab === "signin"} onClick={() => setTab("signin")} className={`px-3 py-1.5 text-sm rounded-lg ${tab === "signin" ? "bg-neutral-800" : "hover:bg-neutral-900"}`}>Sign in</button>
+        {/* Top tabs */}
+        <div
+          role="tablist"
+          aria-label="Join or sign in"
+          className="mb-3 inline-flex rounded-xl border border-neutral-800 p-1"
+        >
+          <button
+            role="tab"
+            aria-selected={tab === "join"}
+            onClick={() => {
+              setTab("join");
+              setOpenInline(null);
+            }}
+            className={`px-3 py-1.5 text-sm rounded-lg ${
+              tab === "join" ? "bg-neutral-800" : "hover:bg-neutral-900"
+            }`}
+          >
+            Join
+          </button>
+          <button
+            role="tab"
+            aria-selected={tab === "signin"}
+            onClick={() => {
+              setTab("signin");
+              setOpenInline(null);
+            }}
+            className={`px-3 py-1.5 text-sm rounded-lg ${
+              tab === "signin" ? "bg-neutral-800" : "hover:bg-neutral-900"
+            }`}
+          >
+            Sign in
+          </button>
         </div>
 
         {tab === "join" && <CycleTabs />}
         {tab === "join" && <WhatYouGet />}
 
+        {/* Alerts */}
         {info && (
-          <div className="mb-4 rounded border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-blue-200 text-sm" aria-live="polite">
+          <div
+            className="mb-4 rounded border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-blue-200 text-sm"
+            aria-live="polite"
+          >
             {info}
           </div>
         )}
         {checkoutError && (
-          <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300 text-sm" aria-live="polite">
+          <div
+            className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300 text-sm"
+            aria-live="polite"
+          >
             {checkoutError}
           </div>
         )}
 
+        {/* MAIN */}
         {tab === "join" ? (
           <>
             <div className="grid gap-4 md:grid-cols-2">
@@ -491,33 +571,26 @@ export default function JoinPage() {
                   Prefer to start free? Join with Access to browse and redeem public offers. Upgrade any time.
                 </div>
 
-                {!freeOpen ? (
-                  <PrimaryButton
-                    onClick={() => { setFreeOpen(true); setOpenInline(null); queueMicrotask(() => freeRef.current?.focus()); }}
-                    className="self-start md:self-auto"
-                  >
-                    Join free
+                <div className="flex w-full flex-col items-stretch gap-2 md:w-auto md:flex-row">
+                  <label htmlFor="email-access" className="sr-only">
+                    Email address
+                  </label>
+                  <input
+                    id="email-access"
+                    ref={freeInputRef}
+                    type="email"
+                    inputMode="email"
+                    placeholder="you@example.com"
+                    autoComplete="email"
+                    value={emailFree}
+                    onChange={(e) => setEmailFree(e.target.value)}
+                    onKeyDown={onEnter(handleFreeJoin)}
+                    className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500 md:w-64"
+                  />
+                  <PrimaryButton onClick={handleFreeJoin} disabled={busy || sending} className="text-sm">
+                    {sent ? "Link sent ✓" : sending ? "Sending…" : "Email me a link"}
                   </PrimaryButton>
-                ) : (
-                  <div className="flex w-full flex-col items-stretch gap-2 md:w-auto md:flex-row">
-                    <label htmlFor="email-access" className="sr-only">Email address</label>
-                    <input
-                      id="email-access"
-                      ref={freeRef}
-                      type="email"
-                      inputMode="email"
-                      placeholder="you@example.com"
-                      autoComplete="email"
-                      value={emailFree}
-                      onChange={(e) => setEmailFree(e.target.value)}
-                      onKeyDown={onEnter(handleFreeJoin)}
-                      className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500 md:w-64"
-                    />
-                    <PrimaryButton onClick={handleFreeJoin} disabled={busy || sending} className="text-sm">
-                      {sent ? "Link sent ✓" : sending ? "Sending…" : "Email me a link"}
-                    </PrimaryButton>
-                  </div>
-                )}
+                </div>
               </div>
               <div className="mt-2 text-xs text-neutral-500">
                 No card details needed • You’ll return to /offers after sign-in
@@ -525,16 +598,18 @@ export default function JoinPage() {
             </div>
           </>
         ) : (
-          // SIGN IN
+          // SIGN IN TAB
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
             <div className="mb-3 text-sm text-neutral-300">
               Enter your email and we’ll email you a secure sign-in link.
             </div>
             <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-              <label htmlFor="email-signin" className="sr-only">Email address</label>
+              <label htmlFor="email-signin" className="sr-only">
+                Email address
+              </label>
               <input
                 id="email-signin"
-                ref={freeRef}
+                ref={freeInputRef}
                 type="email"
                 inputMode="email"
                 placeholder="you@example.com"
@@ -549,7 +624,8 @@ export default function JoinPage() {
               </PrimaryButton>
             </div>
             <p className="mt-2 text-xs text-neutral-500">
-              You’ll return to /offers after sign-in. If your link has expired or was already used, request a new one.
+              You’ll return to /offers after sign-in. If your link has expired or was already used,
+              request a new one.
             </p>
           </div>
         )}
