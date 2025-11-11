@@ -13,9 +13,21 @@ export type TrackEvent =
   | "join_pro_click"
   | "join_free_click"
   | "welcome_profile_saved"
-  | "welcome_skip";
+  | "welcome_skip"
+  // NEW: checkout + activation + success states
+  | "checkout_start"
+  | "checkout_fail"
+  | "checkout_return_pending"
+  | "activation_link_sent"
+  | "activation_link_resend"
+  | "activation_finalised"
+    | /* existing ones */ "welcome_skip"
+  | "account_manage_billing_click"
+  | "success_poll_ready"
+  | "success_poll_timeout"
+  | "success_poll_error";
 
-// keep your existing `track()` implementation as-is
+// Keep implementation simple; your analytics layer can hook the CustomEvent.
 export function track(
   event: TrackEvent,
   meta: Record<string, string | number | boolean> = {}
@@ -23,7 +35,8 @@ export function track(
   try {
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("tc:track", { detail: { event, meta } }));
+      // Optional debug:
+      // console.debug("[track]", event, meta);
     }
-    // no-op/log to console or your real analytics here
   } catch {}
 }

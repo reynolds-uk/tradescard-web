@@ -1,13 +1,13 @@
-// app/auth/callback/CallbackClient.tsx
 "use client";
 
-import { useEffect, useMemo } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
 export default function CallbackClient() {
   const router = useRouter();
   const params = useSearchParams();
+  const [error, setError] = useState<string | null>(null);
 
   const supabase = useMemo(
     () =>
@@ -19,36 +19,47 @@ export default function CallbackClient() {
   );
 
   useEffect(() => {
+    let cancelled = false;
+
     (async () => {
       try {
-        // Ensure session is ready
-        const { data } = await supabase.auth.getSession();
-        const user = data?.session?.user ?? null;
+        // Supabase OAuth/PKCE or magic-link callback (if any still target this route)
+        const { error: exErr } = await supabase.auth.exchangeCodeForSession(window.location.href);
+        if (exErr) throw exErr;
 
-        const next = params.get("next");
-        if (next) {
-          router.replace(next);
-          return;
-        }
+        // Optional: honour an explicit return_to param
+        const returnTo = params.get("return_to");
 
-        // First-login heuristic (client-side flag)
-        if (user) {
-          const key = `tc:welcome-seen:${user.id}`;
-          const seen = localStorage.getItem(key);
-          if (!seen) {
-            localStorage.setItem(key, "1");
-            router.replace("/welcome");
-            return;
-          }
-        }
+        // If they had picked a plan prior to auth, complete that intent
+        let plan = null as null | "member" | "pro";
+        try {
+          const v = localStorage.getItem("join_wanted_plan");
+          if (v === "member" || v === "pro") plan = v;
+          localStorage.removeItem("join_wanted_plan");
+        } catch {}
 
-        router.replace("/account");
-      } catch {
-        router.replace("/");
+        const dest =
+          returnTo ||
+          (plan ? `/join?plan=${plan}&open=1` : "/welcome");
+
+        if (!cancelled) router.replace(dest);
+      } catch (e: any) {
+        setError(e?.message || "We couldn’t finish sign-in.");
+        // Gentle nudge after a pause
+        setTimeout(() => {
+          if (!cancelled) router.replace("/join?mode=signin&error=server_error");
+        }, 1500);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
-  return null;
+    return () => {
+      cancelled = true;
+    };
+  }, [router, supabase, params]);
+
+  return (
+    <div className="mx-auto max-w-5xl px-4 py-2 text-xs text-neutral-500" aria-live="polite">
+      {error ? error : "Signing you in…"}
+    </div>
+  );
 }

@@ -2,44 +2,46 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import PrimaryButton from "@/components/PrimaryButton";
+import ManageBillingButton from "@/components/ManageBillingButton";
 import { routeToJoin } from "@/lib/routeToJoin";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
-
-// NEW: shared data hooks
 import { useSessionUser, useProfile, useMember } from "@/lib/data";
-
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_API_BASE ||
-  "https://tradescard-api.vercel.app";
+import { API_BASE } from "@/lib/apiBase";
 
 type Tier = "access" | "member" | "pro";
-
-type MeView = {
-  user_id: string;
-  email: string;
-  name?: string | null;
-  tier: Tier;
-  status: string;
-  renewal_date: string | null;
-  joined_at?: string | null;
-};
 
 type RewardsSummary = {
   lifetime_points: number;
   points_this_month: number;
 };
 
-const TIER_COPY: Record<Tier, { label: string; boost: string; priceShort: string }> = {
-  access: { label: "ACCESS", boost: "1.00×", priceShort: "£0" },
-  member: { label: "MEMBER", boost: "1.25×", priceShort: "£2.99" },
-  pro: { label: "PRO", boost: "1.50×", priceShort: "£7.99" },
+const TIER_META: Record<
+  Tier,
+  { label: string; boost: string; priceShort: string; tagline: string }
+> = {
+  access: {
+    label: "ACCESS",
+    boost: "1.00×",
+    priceShort: "£0",
+    tagline: "Browse public offers. Upgrade any time.",
+  },
+  member: {
+    label: "MEMBER",
+    boost: "1.25×",
+    priceShort: "£2.99",
+    tagline: "Core benefits unlocked. Monthly rewards included.",
+  },
+  pro: {
+    label: "PRO",
+    boost: "1.50×",
+    priceShort: "£7.99",
+    tagline: "All benefits, early-access deals, biggest rewards boosts.",
+  },
 };
 
 function Badge({
@@ -58,35 +60,37 @@ function Badge({
   return <span className={`rounded px-2 py-0.5 text-xs ${map[tone]}`}>{children}</span>;
 }
 
-// Safe email masker (fixes previous "u possibly undefined" build error)
-const maskEmail = (e?: string | null) => {
-  if (!e) return "—";
-  const [u = "", d = ""] = e.split("@");
-  const maskedUser = u.length <= 2 ? (u.charAt(0) ? `${u.charAt(0)}…` : "…") : `${u.slice(0, 2)}…${u.slice(-1)}`;
-  return `${maskedUser}@${d}`;
+const statusBadge = (s?: string) => {
+  if (s === "active") return <Badge tone="ok">active</Badge>;
+  if (s === "trialing") return <Badge tone="warn">trialing</Badge>;
+  if (s === "past_due") return <Badge tone="bad">past due</Badge>;
+  if (s === "canceled") return <Badge tone="muted">canceled</Badge>;
+  return <Badge tone="muted">{s || "free"}</Badge>;
 };
 
+const prettyDate = (iso?: string | null) =>
+  iso
+    ? new Date(iso).toLocaleDateString("en-GB", {
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+      })
+    : "—";
+
 export default function AccountPage() {
-  // Session + data via shared hooks
-  const { data: me } = useSessionUser(); // { id, email, created_at } or null
+  // Session & data
+  const { data: me } = useSessionUser();
   const userId = me?.id ?? null;
-  const { data: profile } = useProfile(userId); // { email, name, phone, ... } or null
-  const { data: member } = useMember(userId);   // { tier, status, current_period_end } or null
+  const { data: profile } = useProfile(userId);
+  const { data: member } = useMember(userId);
 
-  const params = useSearchParams();
-
-  // Derived UI flags
   const tier: Tier = (member?.tier as Tier) ?? "access";
   const status = member?.status ?? "free";
   const renewal = member?.current_period_end ?? null;
   const showTrial = shouldShowTrial({ tier } as any);
   const isSignedIn = !!userId;
 
-  // Minimal "ready" once we've computed initial values on client
-  const [ready, setReady] = useState(false);
-  useEffect(() => setReady(true), []);
-
-  // Supabase only for signOut()
+  // Supabase (sign-out + profile update)
   const supabase = useMemo(
     () =>
       createClient(
@@ -96,174 +100,96 @@ export default function AccountPage() {
     []
   );
 
+  // Local state
+  const [ready, setReady] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const [name, setName] = useState(profile?.name ?? "");
+  const [savingName, setSavingName] = useState(false);
+  const [nameSaved, setNameSaved] = useState(false);
+  const [error, setError] = useState<string>("");
+
+  const [rewards, setRewards] = useState<RewardsSummary | null>(null);
   const actionsRef = useRef<HTMLDivElement | null>(null);
 
-  const [view, setView] = useState<MeView | null>(null);
-  const [rewards, setRewards] = useState<RewardsSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  useEffect(() => setReady(true), []);
+  useEffect(() => setName(profile?.name ?? ""), [profile?.name]);
 
-  // Pending activation (after Stripe, before sign-in)
-  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
-  const [resendInfo, setResendInfo] = useState<string>("");
-
-  const [pulseActions, setPulseActions] = useState(false);
-
-  // Build the simple view model from hooks
+  // Load rewards once signed in
   useEffect(() => {
-    if (!userId) {
-      setView(null);
+    if (!isSignedIn || !userId) {
+      setRewards(null);
+      setLoading(false);
       return;
     }
-    setView({
-      user_id: userId,
-      email: profile?.email || "",
-      name: profile?.name ?? null,
-      tier,
-      status,
-      renewal_date: renewal,
-      joined_at: me?.created_at || null,
-    });
-  }, [userId, profile?.email, profile?.name, tier, status, renewal, me?.created_at]);
-
-  // Rewards summary from API (only when signed in)
-  const loadRewards = async (uid: string) => {
-    try {
-      const rw = await fetch(
-        `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(uid)}`,
-        { cache: "no-store" }
-      );
-      if (rw.ok) {
-        const sum: RewardsSummary = await rw.json();
-        setRewards({
-          lifetime_points: Number.isFinite(sum.lifetime_points) ? sum.lifetime_points : 0,
-          points_this_month: Number.isFinite(sum.points_this_month) ? sum.points_this_month : 0,
-        });
-      } else {
-        setRewards(null);
-      }
-    } catch {
-      setRewards(null);
-    }
-  };
-
-  // Initial load / pending-activation detection
-  useEffect(() => {
-    if (!ready) return;
 
     (async () => {
       try {
         setLoading(true);
-
-        // Look for a pending session (just returned from Stripe but not signed in yet)
-        const sessionId = params.get("session_id");
-        const fallbackEmail = params.get("pending_email");
-
-        if (!isSignedIn && (sessionId || fallbackEmail)) {
-          try {
-            let email: string | null = null;
-            if (sessionId) {
-              const r = await fetch(
-                `${API_BASE}/api/checkout/session?session_id=${encodeURIComponent(sessionId)}`
-              );
-              if (r.ok) {
-                const j = await r.json().catch(() => ({} as any));
-                email = (j?.email as string) || null;
-              }
-            }
-            if (!email && fallbackEmail) email = fallbackEmail;
-
-            if (email) {
-              setPendingEmail(email);
-              // Clean URL
-              try {
-                const url = new URL(window.location.href);
-                ["session_id", "pending_email", "status", "success", "canceled", "auth_error", "error", "error_code"].forEach(
-                  (k) => url.searchParams.delete(k)
-                );
-                window.history.replaceState({}, "", url.pathname + url.hash);
-              } catch {}
-            }
-          } catch {
-            /* non-fatal */
-          }
+        const rw = await fetch(
+          `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(userId)}`
+        );
+        if (rw.ok) {
+          const j = (await rw.json()) as RewardsSummary;
+          setRewards({
+            lifetime_points: Number(j?.lifetime_points) || 0,
+            points_this_month: Number(j?.points_this_month) || 0,
+          });
+        } else {
+          setRewards(null);
         }
-
-        // If signed in, load rewards
-        if (isSignedIn && userId) {
-          await loadRewards(userId);
-        }
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Something went wrong");
+      } catch {
+        setRewards(null);
       } finally {
         setLoading(false);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, isSignedIn, userId]);
+  }, [isSignedIn, userId]);
 
-  // Spotlight actions if arriving from an upgrade path
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (window.location.hash === "#upgrade" && actionsRef.current) {
-      actionsRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-      setPulseActions(true);
-      const t = setTimeout(() => setPulseActions(false), 1600);
-      return () => clearTimeout(t);
-    }
-  }, [loading]);
-
+  // Actions
   const startMembership = async (plan: "member" | "pro") => {
+    if (!userId) {
+      routeToJoin(plan);
+      return;
+    }
     try {
-      setBusy(true);
       setError("");
-      if (!userId) {
-        routeToJoin(plan);
-        return;
-      }
       const res = await fetch(`${API_BASE}/api/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId,
-          email: profile?.email,
-          plan,
-          trial: showTrial,
-          next: "/welcome",
-        }),
-        keepalive: true,
+        body: JSON.stringify({ plan, cycle: "month", email: profile?.email }),
       });
-      const json = await res.json().catch(() => ({} as { url?: string; error?: string }));
-      if (!res.ok || !json.url) throw new Error(json?.error || "Checkout failed");
-      window.location.href = json.url;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not start checkout");
-    } finally {
-      setBusy(false);
+      const j = await res.json().catch(() => ({} as any));
+      if (!res.ok || !j?.url) throw new Error(j?.error || "Checkout failed");
+      window.location.href = j.url;
+    } catch (e: any) {
+      setError(e?.message || "Could not start checkout");
     }
   };
 
-  const openBillingPortal = async () => {
+  const saveName = async () => {
+    if (!userId) return;
     try {
-      setBusy(true);
-      setError("");
-      if (!userId) {
-        routeToJoin();
-        return;
-      }
-      const res = await fetch(`${API_BASE}/api/stripe/portal`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId }),
-      });
-      const json = await res.json().catch(() => ({} as { url?: string; error?: string }));
-      if (!res.ok || !json?.url) throw new Error(json?.error || `Portal failed (${res.status})`);
-      window.location.href = json.url;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to open billing portal");
+      setSavingName(true);
+      setNameSaved(false);
+      const { error: upErr } = await supabase
+        .from("profiles")
+        .upsert(
+          {
+            user_id: userId,
+            email: profile?.email ?? null,
+            name: name || null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" }
+        );
+      if (upErr) throw upErr;
+      setNameSaved(true);
+      setTimeout(() => setNameSaved(false), 2000);
+    } catch (e: any) {
+      setError(e?.message || "We couldn’t save your details just now.");
     } finally {
-      setBusy(false);
+      setSavingName(false);
     }
   };
 
@@ -275,74 +201,28 @@ export default function AccountPage() {
     }
   };
 
-  const refresh = async () => {
-    try {
-      setLoading(true);
-      if (userId) await loadRewards(userId);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Refresh failed");
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Capability flags
+  const canJoin = tier === "access" || status === "canceled" || status === "free";
+  const canUpgrade = tier === "member" && status !== "canceled";
+  const canDowngrade = tier === "pro" && status !== "canceled";
+  const isActive = status === "active" || status === "trialing";
 
-  const resendMagicLink = async () => {
-    if (!pendingEmail) return;
-    try {
-      setBusy(true);
-      setResendInfo("");
-      const res = await fetch(`${API_BASE}/api/auth/magic-link`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: pendingEmail,
-          redirect_to: "/welcome",
-        }),
-      });
-      if (!res.ok) throw new Error(`Resend failed (${res.status})`);
-      setResendInfo("Link sent. Please check your inbox.");
-    } catch (e) {
-      setResendInfo(e instanceof Error ? e.message : "Could not resend link");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const statusBadge = (s: string) => {
-    if (s === "active") return <Badge tone="ok">active</Badge>;
-    if (s === "trialing") return <Badge tone="warn">trialing</Badge>;
-    if (s === "past_due") return <Badge tone="bad">past due</Badge>;
-    if (s === "canceled") return <Badge tone="muted">canceled</Badge>;
-    return <Badge tone="muted">{s}</Badge>;
-  };
-
-  const prettyDate = (iso?: string | null) =>
-    iso ? new Date(iso).toLocaleDateString("en-GB", { year: "numeric", month: "short", day: "2-digit" }) : "—";
-
-  const canJoin =
-    !view || view.tier === "access" || view.status === "canceled" || view.status === "free";
-  const canUpgrade = view?.status !== "canceled" && view?.tier === "member";
-  const canDowngrade = view?.status !== "canceled" && view?.tier === "pro";
-  const isActive = view?.status === "active" || view?.status === "trialing";
-
-  // Trial-aware labels
-  const memberCta = showTrial ? TRIAL_COPY : "Join as Member (£2.99/mo)";
-  const proCta = "Go Pro (£7.99/mo)";
-  const upgradeToProCta = "Upgrade to Pro";
-
-  // Mobile sticky CTA if actionable
-  const stickyLabel =
-    canJoin ? (showTrial ? TRIAL_COPY : "Become a Member") :
-    canUpgrade ? upgradeToProCta :
-    canDowngrade ? "Manage billing" : "";
-
+  // Sticky CTA
+  const stickyLabel = canJoin
+    ? showTrial
+      ? TRIAL_COPY
+      : "Become a Member"
+    : canUpgrade
+    ? "Upgrade to Pro"
+    : canDowngrade
+    ? "Manage billing"
+    : "";
   const stickyAction = () => {
     if (canJoin) return startMembership("member");
     if (canUpgrade) return startMembership("pro");
-    if (canDowngrade) return openBillingPortal();
+    if (canDowngrade) document.getElementById("manage-billing-btn")?.click();
   };
-
-  const showSticky = ready && !loading && view && (canJoin || canUpgrade || canDowngrade);
+  const showSticky = ready && !loading && isSignedIn && (canJoin || canUpgrade || canDowngrade);
 
   return (
     <>
@@ -355,8 +235,8 @@ export default function AccountPage() {
         >
           <div className="safe-inset-bottom" />
           <div className="mx-auto max-w-5xl px-4 py-3">
-            <PrimaryButton onClick={stickyAction} disabled={busy} className="w-full text-base py-3">
-              {busy ? "Opening…" : stickyLabel}
+            <PrimaryButton onClick={stickyAction} className="w-full text-base py-3">
+              {stickyLabel}
             </PrimaryButton>
             <div className="mt-2 text-center text-[11px] text-neutral-400">
               {canJoin && "Billed monthly • Cancel any time"}
@@ -370,63 +250,35 @@ export default function AccountPage() {
       <Container className={showSticky ? "safe-bottom-pad" : ""}>
         <PageHeader
           title="My Account"
-          subtitle="Manage your membership, card, billing and rewards eligibility."
+          subtitle="Manage your membership, billing, details and rewards."
           aside={
             ready ? (
-              <button
-                onClick={refresh}
-                className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800 disabled:opacity-60"
-                disabled={loading}
-              >
-                {loading ? "Refreshing…" : "Refresh"}
-              </button>
+              <div className="text-sm text-neutral-400">
+                {isSignedIn ? (
+                  <span className="hidden sm:inline">Signed in as</span>
+                ) : (
+                  <span className="hidden sm:inline">Not signed in</span>
+                )}{" "}
+                <span className="font-mono text-neutral-300">
+                  {profile?.email ?? "—"}
+                </span>
+              </div>
             ) : null
           }
         />
 
-        {/* Initial skeleton to prevent flicker */}
-        {!ready && (
-          <div className="rounded-xl border border-neutral-800 p-5 bg-neutral-900/60 animate-pulse h-40" />
-        )}
-
-        {error && ready && (
+        {error && (
           <div className="mb-4 rounded border border-red-600/40 bg-red-900/10 px-3 py-2 text-red-300">
             {error}
           </div>
         )}
 
-        {/* Logged out + pending activation cue */}
-        {ready && !loading && !isSignedIn && pendingEmail && (
-          <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-5">
-            <p className="font-medium">Please activate your account</p>
-            <p className="text-sm text-amber-200 mt-1">
-              We’ve sent a secure link to <span className="font-medium">{maskEmail(pendingEmail)}</span>.
-              Click it to finish setting up your membership.
-            </p>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <PrimaryButton onClick={resendMagicLink} disabled={busy}>
-                {busy ? "Sending…" : "Resend link"}
-              </PrimaryButton>
-              <button
-                onClick={() => routeToJoin()}
-                className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800"
-              >
-                Use a different email
-              </button>
-              {resendInfo && <span className="text-xs text-amber-200">{resendInfo}</span>}
-            </div>
-            <p className="mt-2 text-xs text-amber-200/80">
-              Tip: check Promotions/Spam if it hasn’t arrived within a minute.
-            </p>
-          </div>
-        )}
-
-        {/* Logged out (no pending state) */}
-        {ready && !loading && !isSignedIn && !pendingEmail && (
+        {/* Logged-out simple prompt */}
+        {!isSignedIn && (
           <div className="rounded-xl border border-neutral-800 p-5 bg-neutral-900/60">
             <p className="font-medium mb-2">You’re not signed in.</p>
             <p className="text-neutral-400 mb-3">
-              Use your email to get a magic sign-in link. No password needed.
+              Use your email to get a magic link. No password needed.
             </p>
             <div className="flex gap-2">
               <button
@@ -442,194 +294,221 @@ export default function AccountPage() {
           </div>
         )}
 
-        {/* Logged in */}
-        {ready && !loading && isSignedIn && view && (
-          <div className="space-y-6">
-            {/* Status cues */}
-            {view.status === "past_due" && (
-              <div className="rounded-lg border border-red-700/40 bg-red-900/10 p-3 text-sm text-red-300">
-                Payment issue detected. Update your billing details to keep benefits active.
-                <button onClick={openBillingPortal} className="ml-3 underline underline-offset-4">
-                  Manage billing
+        {/* Signed-in layout */}
+        {isSignedIn && (
+          <div className="grid gap-6 md:grid-cols-3">
+            {/* Left column */}
+            <section className="md:col-span-2 space-y-6">
+              {/* Membership summary */}
+              <div className="rounded-2xl border border-neutral-800 p-5 bg-gradient-to-br from-neutral-900 to-neutral-950">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm text-neutral-400">Membership</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <div className="text-2xl font-semibold">TradeCard</div>
+                      <Badge tone="muted">{TIER_META[tier].label}</Badge>
+                      {statusBadge(status)}
+                    </div>
+                    <p className="mt-2 text-sm text-neutral-300">{TIER_META[tier].tagline}</p>
+                  </div>
+                  <div className="rounded-lg border border-dashed border-neutral-700 px-3 py-2 text-xs text-neutral-400">
+                    Wallet pass coming soon
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-lg border border-neutral-800 p-3 text-center">
+                    <div className="text-2xl font-semibold">{TIER_META[tier].boost}</div>
+                    <div className="text-xs text-neutral-400 mt-1">Tier boost</div>
+                  </div>
+                  <div className="rounded-lg border border-neutral-800 p-3 text-center">
+                    <div className="text-2xl font-semibold">{TIER_META[tier].priceShort}</div>
+                    <div className="text-xs text-neutral-400 mt-1">per month</div>
+                  </div>
+                  <div className="rounded-lg border border-neutral-800 p-3 text-center">
+                    <div className="text-2xl font-semibold">{prettyDate(renewal)}</div>
+                    <div className="text-xs text-neutral-400 mt-1">Renews</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Rewards snapshot */}
+              <div className="rounded-xl border border-neutral-800 p-5">
+                <div className="flex items-center justify-between">
+                  <div className="font-medium">Rewards</div>
+                  <div className="text-xs text-neutral-400">
+                    {isActive ? "Eligible while active" : "Not eligible"}
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-lg border border-neutral-800 p-3">
+                    <div className="text-sm text-neutral-400">Points this month</div>
+                    <div className="mt-1 text-2xl font-semibold">
+                      {loading ? "…" : rewards?.points_this_month ?? "—"}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-neutral-800 p-3">
+                    <div className="text-sm text-neutral-400">Lifetime points</div>
+                    <div className="mt-1 text-2xl font-semibold">
+                      {loading ? "…" : rewards?.lifetime_points ?? "—"}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-neutral-800 p-3">
+                    <div className="text-sm text-neutral-400">Status</div>
+                    <div className="mt-1">{statusBadge(status)}</div>
+                  </div>
+                </div>
+                <p className="mt-3 text-sm text-neutral-400">
+                  Cancelling or downgrading stops new entries immediately. Lifetime points remain
+                  on your profile but do not qualify you for draws while inactive.
+                </p>
+              </div>
+
+              {/* Plan actions */}
+              <div ref={actionsRef} className="rounded-xl border border-neutral-800 p-5">
+                <div className="font-medium mb-3">Plan actions</div>
+
+                {canJoin && (
+                  <div className="flex flex-wrap gap-2">
+                    <PrimaryButton onClick={() => startMembership("member")}>
+                      {showTrial ? TRIAL_COPY : "Join as Member (£2.99/mo)"}
+                    </PrimaryButton>
+                    <button
+                      onClick={() => startMembership("pro")}
+                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
+                    >
+                      Go Pro (£7.99/mo)
+                    </button>
+                  </div>
+                )}
+
+                {canUpgrade && (
+                  <div className="flex flex-wrap gap-2">
+                    <PrimaryButton onClick={() => startMembership("pro")}>
+                      Upgrade to Pro
+                    </PrimaryButton>
+                    <button
+                      id="manage-billing-btn"
+                      onClick={() => document.getElementById("billing-portal-click")?.click()}
+                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
+                    >
+                      Manage billing / Cancel
+                    </button>
+                  </div>
+                )}
+
+                {canDowngrade && (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => startMembership("member")}
+                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
+                    >
+                      Switch to Member
+                    </button>
+                    <button
+                      id="manage-billing-btn"
+                      onClick={() => document.getElementById("billing-portal-click")?.click()}
+                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
+                    >
+                      Manage billing / Cancel
+                    </button>
+                  </div>
+                )}
+
+                {!canJoin && !canUpgrade && !canDowngrade && (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      id="manage-billing-btn"
+                      onClick={() => document.getElementById("billing-portal-click")?.click()}
+                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
+                    >
+                      Manage billing / Cancel
+                    </button>
+                  </div>
+                )}
+
+                <p className="mt-3 text-xs text-neutral-500">
+                  You can cancel any time. Cancelling stops reward entries immediately.
+                </p>
+              </div>
+            </section>
+
+            {/* Right column */}
+            <aside className="space-y-6">
+              {/* Your details */}
+              <div className="rounded-xl border border-neutral-800 p-5">
+                <div className="font-medium mb-3">Your details</div>
+                <div className="grid gap-3">
+                  <div>
+                    <label htmlFor="name" className="block text-xs text-neutral-400 mb-1">
+                      Name <span className="text-neutral-500">(optional)</span>
+                    </label>
+                    <input
+                      id="name"
+                      type="text"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
+                      placeholder="e.g. Alex Smith"
+                    />
+                    <div className="mt-2 flex gap-2">
+                      <PrimaryButton onClick={saveName} disabled={savingName}>
+                        {savingName ? "Saving…" : "Save"}
+                      </PrimaryButton>
+                      {nameSaved && (
+                        <span className="text-xs text-green-300 self-center">Saved ✓</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="text-sm text-neutral-300">
+                    <div className="opacity-60">Email</div>
+                    <div className="font-mono">{profile?.email ?? "—"}</div>
+                  </div>
+                  <div className="text-sm text-neutral-300">
+                    <div className="opacity-60">Member ID</div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono truncate">{userId}</span>
+                      <button
+                        className="rounded bg-neutral-800 px-2 py-0.5 text-xs hover:bg-neutral-700"
+                        onClick={() => userId && navigator.clipboard.writeText(userId)}
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Billing */}
+              <div className="rounded-xl border border-neutral-800 p-5">
+                <div className="font-medium mb-1">Billing</div>
+                <p className="text-sm text-neutral-400">
+                  Manage your plan, update card, view invoices or cancel.
+                </p>
+                <div className="mt-3">
+                  {/* Hidden helper for programmatic click from left column */}
+                  <div className="hidden">
+                    <button id="billing-portal-click" onClick={() => { /* placeholder */ }} />
+                  </div>
+                  <ManageBillingButton className="mt-1" />
+                </div>
+                <div className="mt-3 text-xs text-neutral-500">
+                  Next renewal: {prettyDate(renewal)}
+                </div>
+              </div>
+
+              {/* Sign out */}
+              <div className="rounded-xl border border-neutral-800 p-5">
+                <div className="font-medium mb-2">Security</div>
+                <button
+                  onClick={signOut}
+                  className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
+                >
+                  Sign out
                 </button>
               </div>
-            )}
-            {view.status === "trialing" && (
-              <div className="rounded-lg border border-amber-600/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-                You’re on a trial. Upgrade, switch, or cancel any time from billing.
-                <button onClick={openBillingPortal} className="ml-3 underline underline-offset-4">
-                  Open billing portal
-                </button>
-              </div>
-            )}
-
-            {/* Summary card */}
-            <section className="rounded-2xl border border-neutral-800 p-5 bg-gradient-to-br from-neutral-900 to-neutral-950">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-sm text-neutral-400">Membership</div>
-                  <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <div className="text-2xl font-semibold">TradeCard</div>
-                    <Badge tone="muted">{TIER_COPY[view.tier].label}</Badge>
-                    {statusBadge(view.status)}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-dashed border-neutral-700 px-3 py-2 text-xs text-neutral-400">
-                  Wallet pass coming soon
-                </div>
-              </div>
-
-              <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                <div className="truncate">
-                  <span className="opacity-60">Name:</span> {view.name || "—"}
-                </div>
-                <div className="truncate">
-                  <span className="opacity-60">Email:</span> {view.email}
-                </div>
-                <div className="truncate">
-                  <span className="opacity-60">Member ID:</span> {view.user_id}
-                  <button
-                    className="ml-2 rounded bg-neutral-800 px-2 py-0.5 text-xs hover:bg-neutral-700"
-                    onClick={() => navigator.clipboard.writeText(view.user_id)}
-                  >
-                    Copy ID
-                  </button>
-                </div>
-                <div className="truncate">
-                  <span className="opacity-60">Joined:</span> {prettyDate(view.joined_at)}
-                </div>
-              </div>
-
-              <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-                <div className="rounded-lg border border-neutral-800 p-3">
-                  <div className="text-2xl font-semibold">{TIER_COPY[view.tier].boost}</div>
-                  <div className="text-xs text-neutral-400 mt-1">Tier boost</div>
-                </div>
-                <div className="rounded-lg border border-neutral-800 p-3">
-                  <div className="text-2xl font-semibold">{TIER_COPY[view.tier].priceShort}</div>
-                  <div className="text-xs text-neutral-400 mt-1">per month</div>
-                </div>
-                <div className="rounded-lg border border-neutral-800 p-3">
-                  <div className="text-2xl font-semibold">{prettyDate(view.renewal_date)}</div>
-                  <div className="text-xs text-neutral-400 mt-1">Renews</div>
-                </div>
-              </div>
-            </section>
-
-            {/* Rewards eligibility */}
-            <section className="rounded-xl border border-neutral-800 p-5">
-              <div className="flex items-center justify-between">
-                <div className="font-medium">Rewards eligibility</div>
-                <div className="text-xs text-neutral-400">
-                  {isActive ? "Eligible while membership is active" : "Not eligible"}
-                </div>
-              </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-3">
-                <div className="rounded-lg border border-neutral-800 p-3">
-                  <div className="text-sm text-neutral-400">Points this month</div>
-                  <div className="mt-1 text-2xl font-semibold">
-                    {rewards ? rewards.points_this_month : "—"}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-neutral-800 p-3">
-                  <div className="text-sm text-neutral-400">Lifetime points</div>
-                  <div className="mt-1 text-2xl font-semibold">
-                    {rewards ? rewards.lifetime_points : "—"}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-neutral-800 p-3">
-                  <div className="text-sm text-neutral-400">Status</div>
-                  <div className="mt-1">{statusBadge(view.status)}</div>
-                </div>
-              </div>
-              <p className="mt-3 text-sm text-neutral-400">
-                Cancelling or downgrading stops new entries immediately. Lifetime points remain
-                on your profile but do not qualify you for draws while inactive.
-              </p>
-            </section>
-
-            {/* Plan actions */}
-            <section
-              ref={actionsRef}
-              className={`rounded-xl border border-neutral-800 p-5 ${pulseActions ? "animate-pulse" : ""}`}
-            >
-              <div className="font-medium mb-3">Plan actions</div>
-
-              {canJoin && (
-                <div className="flex flex-wrap gap-2">
-                  <PrimaryButton onClick={() => startMembership("member")} disabled={busy}>
-                    {busy ? "Opening…" : memberCta}
-                  </PrimaryButton>
-                  <button
-                    onClick={() => startMembership("pro")}
-                    disabled={busy}
-                    className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
-                  >
-                    {busy ? "Opening…" : proCta}
-                  </button>
-                </div>
-              )}
-
-              {canUpgrade && (
-                <div className="flex flex-wrap gap-2">
-                  <PrimaryButton onClick={() => startMembership("pro")} disabled={busy}>
-                    {busy ? "Opening…" : "Upgrade to Pro"}
-                  </PrimaryButton>
-                  <button
-                    onClick={openBillingPortal}
-                    disabled={busy}
-                    className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
-                  >
-                    {busy ? "Opening…" : "Manage billing / Cancel"}
-                  </button>
-                </div>
-              )}
-
-              {canDowngrade && (
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={() => startMembership("member")}
-                    disabled={busy}
-                    className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
-                  >
-                    {busy ? "Opening…" : "Switch to Member"}
-                  </button>
-                  <button
-                    onClick={openBillingPortal}
-                    disabled={busy}
-                    className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
-                  >
-                    {busy ? "Opening…" : "Manage billing / Cancel"}
-                  </button>
-                </div>
-              )}
-
-              {!canJoin && !canUpgrade && !canDowngrade && (
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={openBillingPortal}
-                    disabled={busy}
-                    className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-60"
-                  >
-                    {busy ? "Opening…" : "Manage billing / Cancel"}
-                  </button>
-                </div>
-              )}
-
-              <p className="mt-3 text-xs text-neutral-500">
-                You can cancel any time. Cancelling stops reward entries immediately.
-              </p>
-            </section>
-
-            {/* Sign out */}
-            <div className="flex justify-end">
-              <button
-                onClick={signOut}
-                className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
-              >
-                Sign out
-              </button>
-            </div>
+            </aside>
           </div>
         )}
       </Container>
