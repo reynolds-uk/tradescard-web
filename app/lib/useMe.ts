@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient, type User } from "@supabase/supabase-js";
+import { API_BASE } from "./apiBase"; // <-- now imported from your new helper
 
 type Tier = "access" | "member" | "pro";
 
@@ -16,11 +17,6 @@ type ApiAccount = {
   };
 };
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_API_BASE ||
-  "https://tradescard-api.vercel.app";
-
 export type Me = {
   user?: User | null;
   tier: Tier;
@@ -30,23 +26,36 @@ export type Me = {
   ready: boolean; // prevents flicker in Nav/flags
 };
 
-function derive(me: Pick<Me, "tier" | "status">, a?: ApiAccount | null): Pick<Me, "tier" | "status"> {
+function derive(
+  me: Pick<Me, "tier" | "status">,
+  a?: ApiAccount | null
+): Pick<Me, "tier" | "status"> {
   const apiTier = (a?.members?.tier as Tier | undefined) ?? "access";
-  const apiStatus = a?.members?.status ?? (apiTier === "access" ? "free" : "inactive");
+  const apiStatus =
+    a?.members?.status ?? (apiTier === "access" ? "free" : "inactive");
 
   // normalise to UI statuses
   const status: Me["status"] =
-    apiStatus === "active" ? "paid" :
-    apiStatus === "trialing" ? "trial" :
-    apiTier === "access" ? "free" : "inactive";
+    apiStatus === "active"
+      ? "paid"
+      : apiStatus === "trialing"
+      ? "trial"
+      : apiTier === "access"
+      ? "free"
+      : "inactive";
 
-  const tier: Tier = apiTier === "member" || apiTier === "pro" ? apiTier : "access";
+  const tier: Tier =
+    apiTier === "member" || apiTier === "pro" ? apiTier : "access";
+
   return { tier, status };
 }
 
 async function fetchAccount(userId: string): Promise<ApiAccount | null> {
   try {
-    const r = await fetch(`${API_BASE}/api/account?user_id=${encodeURIComponent(userId)}`, { cache: "no-store" });
+    const r = await fetch(
+      `${API_BASE}/api/account?user_id=${encodeURIComponent(userId)}`,
+      { cache: "no-store" }
+    );
     if (!r.ok) return null;
     return (await r.json()) as ApiAccount;
   } catch {
@@ -56,7 +65,11 @@ async function fetchAccount(userId: string): Promise<ApiAccount | null> {
 
 export function useMe(): Me {
   const supabase = useMemo(
-    () => createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!),
+    () =>
+      createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      ),
     []
   );
 
@@ -66,24 +79,23 @@ export function useMe(): Me {
     ready: false,
   });
 
-  // guard to avoid state updates after unmount
   const alive = useRef(true);
 
   useEffect(() => {
     alive.current = true;
 
     const run = async () => {
-      // get current session
       const { data } = await supabase.auth.getSession();
       const user = data?.session?.user ?? null;
 
       // not signed in → simple access/free
       if (!user) {
-        if (alive.current) setMe({ user: null, tier: "access", status: "free", ready: true });
+        if (alive.current)
+          setMe({ user: null, tier: "access", status: "free", ready: true });
         return;
       }
 
-      // optimistic: show user immediately as access/free while we fetch
+      // optimistic state while fetching
       if (alive.current) {
         setMe((prev) => ({
           ...prev,
@@ -95,7 +107,6 @@ export function useMe(): Me {
         }));
       }
 
-      // single fetch
       const account = await fetchAccount(user.id);
       const { tier, status } = derive({ tier: "access", status: "free" }, account);
 
@@ -110,10 +121,12 @@ export function useMe(): Me {
         });
       }
 
-      // If we’ve just returned from Stripe, finish the upgrade quickly by polling for a few seconds.
-      const hasSessionId = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("session_id");
+      // If just returned from Stripe, poll a few times for update
+      const hasSessionId =
+        typeof window !== "undefined" &&
+        new URLSearchParams(window.location.search).get("session_id");
+
       if (hasSessionId && (tier === "access" || status !== "paid")) {
-        // small, bounded poll (up to ~20s)
         let attempts = 0;
         while (alive.current && attempts < 10) {
           await new Promise((r) => setTimeout(r, 2000));
@@ -121,6 +134,7 @@ export function useMe(): Me {
 
           const refreshed = await fetchAccount(user.id);
           const next = derive({ tier, status }, refreshed);
+
           if (alive.current) {
             setMe((prev) => ({
               ...prev,
@@ -132,7 +146,12 @@ export function useMe(): Me {
             }));
           }
 
-          if (next.status === "paid" || (next.tier === "member" || next.tier === "pro")) break;
+          if (
+            next.status === "paid" ||
+            next.tier === "member" ||
+            next.tier === "pro"
+          )
+            break;
         }
       }
     };
@@ -140,7 +159,6 @@ export function useMe(): Me {
     run();
 
     const sub = supabase.auth.onAuthStateChange(() => {
-      // re-run on auth changes
       run();
     });
 
