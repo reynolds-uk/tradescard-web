@@ -11,6 +11,7 @@ import PrimaryButton from "@/components/PrimaryButton";
 import { useMe } from "@/lib/useMe";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 import { track } from "@/lib/track";
+import { API_BASE } from "@/lib/apiBase";
 
 type Plan = "access" | "member" | "pro";
 type PaidPlan = Exclude<Plan, "access">;
@@ -18,7 +19,7 @@ type Cycle = "month" | "year";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
 
-// Display prices (UI only; Stripe uses your server values)
+// Display prices (UI only; Stripe uses server prices)
 const PRICE = {
   member: { month: 2.99, year: 29.0 },
   pro: { month: 7.99, year: 79.0 },
@@ -50,35 +51,33 @@ export default function JoinPage() {
   const me = useMe();
   const showTrial = shouldShowTrial(me);
 
-  // top tabs & billing cycle
+  // Tabs & billing cycle
   const [tab, setTab] = useState<"join" | "signin">("join");
   const [cycle, setCycle] = useState<Cycle>("month");
 
-  // paid plan selection & which inline email is open
+  // Plan selection & which inline email is open
   const [selectedPlan, setSelectedPlan] = useState<PaidPlan>("member");
   const [openInline, setOpenInline] = useState<null | PaidPlan>(null);
 
-  // free email (kept as a standard controlled input – it never had issues)
+  // Free email (controlled)
   const [emailFree, setEmailFree] = useState("");
   const [freeOpen, setFreeOpen] = useState(false);
 
-  // ux flags
+  // UX flags
   const [info, setInfo] = useState("");
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
   const [busy, setBusy] = useState(false);
   const [checkoutError, setCheckoutError] = useState("");
 
-  // refs for paid inputs (uncontrolled inputs to avoid the one-character bug)
+  // Paid inputs (uncontrolled to avoid the one-character glitch)
   const paidRefs = {
     member: useRef<HTMLInputElement>(null),
     pro: useRef<HTMLInputElement>(null),
   };
-
-  // free input ref for focus
   const freeInputRef = useRef<HTMLInputElement>(null);
 
-  // supabase client (client-side OTP)
+  // Supabase client
   const supabase = useMemo(
     () =>
       createClient(
@@ -88,38 +87,30 @@ export default function JoinPage() {
     []
   );
 
-  /* --------------------------
-     Initialise from URL (once)
-  ---------------------------*/
+  /* -------------------- Initialise from URL (once) -------------------- */
   useEffect(() => {
-    // mode tab
     const mode = (params.get("mode") || params.get("tab") || "").toLowerCase();
     if (mode === "signin") setTab("signin");
     else if (mode === "join") setTab("join");
 
-    // billing cycle
     const qCycle = (params.get("cycle") || "").toLowerCase() as "" | Cycle;
     if (qCycle === "year") setCycle("year");
 
-    // plan selection from URL but DO NOT auto-open email on landing
     const qPlan = (params.get("plan") || "").toLowerCase() as "" | PaidPlan;
     if (qPlan === "member" || qPlan === "pro") setSelectedPlan(qPlan);
 
-    // allow explicit marketing open if ?open=1 (optional)
     if (params.get("open") === "1" && (qPlan === "member" || qPlan === "pro")) {
       setOpenInline(qPlan);
       setFreeOpen(false);
       queueMicrotask(() => paidRefs[qPlan].current?.focus());
     }
 
-    // free path explicit open
     if (params.get("free") === "1") {
       setFreeOpen(true);
       setOpenInline(null);
       queueMicrotask(() => freeInputRef.current?.focus());
     }
 
-    // auth error handling
     const err = params.get("error") || params.get("error_code");
     if (err) {
       const key = err.toLowerCase();
@@ -136,35 +127,28 @@ export default function JoinPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ------------------------------------------
-     Keep URL in sync with top tab
-  -------------------------------------------*/
+  /* -------------------- Keep URL in sync with tab -------------------- */
   useEffect(() => {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
     url.searchParams.set("mode", tab === "signin" ? "signin" : "join");
     window.history.replaceState({}, "", url.toString());
-    // close inline panels when switching tabs
     setOpenInline(null);
     setFreeOpen(false);
   }, [tab]);
 
-  /* ---------------------------------------------------------
-     If signed in and a paid card is open → go straight to Stripe
-  ----------------------------------------------------------*/
+  /* -------- If user becomes signed-in while inline open → go to Stripe -------- */
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getSession();
       if (!data?.session?.user) return;
       if (!openInline) return;
-      await startPaidCheckout(openInline);
+      await startPaidCheckout(openInline); // signed-in path (web route)
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openInline]);
 
-  /* --------------------------
-     Helpers / actions
-  ---------------------------*/
+  /* --------------------------- Helpers / actions --------------------------- */
   const isValidEmail = (v: string) => /^\S+@\S+\.\S+$/.test(v.trim());
 
   async function sendMagicLink(targetEmail: string, redirectTo: string) {
@@ -177,16 +161,28 @@ export default function JoinPage() {
     if (supaErr) throw supaErr;
   }
 
-  // The ONLY place that calls your web /api/checkout route (requires auth)
-  async function startPaidCheckout(plan: PaidPlan) {
+  /**
+   * Start paid checkout.
+   * - If email provided → guest flow via API_BASE (CORS) → Stripe
+   * - If no email provided (already signed in) → web /api/checkout → Stripe
+   */
+  async function startPaidCheckout(plan: PaidPlan, email?: string) {
     try {
       setBusy(true);
       setCheckoutError("");
-      const res = await fetch(`/api/checkout`, {
+
+      const body: any = { plan, cycle };
+      if (email) body.email = email;
+
+      const endpoint = email ? `${API_BASE}/api/checkout` : `/api/checkout`;
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ plan, cycle }),
+        credentials: email ? "omit" : "include",
+        body: JSON.stringify(body),
       });
+
       if (!res.ok) {
         const err = await res.json().catch(() => ({} as any));
         throw new Error(err?.error || "Unable to start checkout");
@@ -198,6 +194,7 @@ export default function JoinPage() {
         cycle,
         trial: plan === "member" && cycle === "month" && showTrial ? true : false,
       });
+
       window.location.href = url;
     } catch (e: any) {
       setCheckoutError(e?.message || "We couldn’t start checkout. Please try again.");
@@ -206,7 +203,7 @@ export default function JoinPage() {
     }
   }
 
-  // choose button: open inline capture if logged out; else to Stripe
+  // Click “Choose …”
   async function choose(plan: PaidPlan) {
     setInfo("");
     const { data } = await supabase.auth.getSession();
@@ -219,32 +216,23 @@ export default function JoinPage() {
       queueMicrotask(() => paidRefs[plan].current?.focus());
       return;
     }
-    await startPaidCheckout(plan);
+    await startPaidCheckout(plan); // signed-in
   }
 
-  // ref-safe flow for paid email continue
+  // Continue button in inline email (guest → Stripe)
   async function handlePaidContinueRefSafe(plan: PaidPlan) {
     const email = getInputValue(paidRefs[plan].current);
     setInfo("");
     try {
       if (!isValidEmail(email)) throw new Error("Enter a valid email address.");
-
-      // Send magic link back to this page; once signed in we’ll auto-redirect to Stripe
-      const redirect = `/join?plan=${plan}&cycle=${cycle}`;
-      setSending(true);
-      await sendMagicLink(email, redirect);
-      setSent(true);
-      setInfo("Check your inbox for a secure sign-in link to continue to payment.");
+      await startPaidCheckout(plan, email); // guest path
     } catch (e: any) {
-      setSent(false);
       setCheckoutError(e?.message || "We couldn’t start checkout. Please try again.");
       paidRefs[plan].current?.focus();
-    } finally {
-      setSending(false);
     }
   }
 
-  // free path (Access) – email me a link
+  // Free (Access) join via magic link
   async function handleFreeJoin() {
     setInfo("");
     try {
@@ -263,7 +251,7 @@ export default function JoinPage() {
     }
   }
 
-  // sticky CTA derived labels
+  // Sticky CTA copy
   const { months: mFree, saved } = monthsFree(
     PRICE[selectedPlan].month,
     PRICE[selectedPlan].year
@@ -276,11 +264,9 @@ export default function JoinPage() {
       : cycle === "month"
       ? `Continue — ${monthlyLabel}`
       : `Continue — ${yearlyLabel}`;
-  const showSticky = tab === "join" && !openInline; // hide when an inline field is open
+  const showSticky = tab === "join" && !openInline;
 
-  /* --------------------------
-     Small UI pieces
-  ---------------------------*/
+  /* ------------------------------- UI pieces ------------------------------- */
   function CycleTabs() {
     return (
       <div className="mb-4 inline-flex items-center gap-2">
@@ -371,7 +357,7 @@ export default function JoinPage() {
               aria-label={`Select ${title}`}
               onClick={() => {
                 setSelectedPlan(plan);
-                setOpenInline(null); // selecting radio doesn’t open email
+                setOpenInline(null); // selecting radio doesn’t auto-open email
               }}
               className={`relative inline-flex h-5 w-5 items-center justify-center rounded-full border ${
                 selected ? "border-white" : "border-neutral-500"
@@ -397,7 +383,6 @@ export default function JoinPage() {
           ))}
         </ul>
 
-        {/* CTA opens inline capture if logged out; goes to Stripe if logged in */}
         {!isInlineOpen && (
           <PrimaryButton
             onClick={() => choose(plan)}
@@ -408,7 +393,7 @@ export default function JoinPage() {
           </PrimaryButton>
         )}
 
-        {/* Email row — always mounted; hidden when closed (prevents remount/focus loss) */}
+        {/* Inline email capture (kept mounted; toggled visibility) */}
         <div
           className={`mt-4 grid gap-2 sm:grid-cols-[1fr_auto] ${isInlineOpen ? "" : "hidden"}`}
           aria-hidden={!isInlineOpen}
@@ -423,7 +408,6 @@ export default function JoinPage() {
             inputMode="email"
             placeholder="you@example.com"
             autoComplete="email"
-            // Uncontrolled input — NO value prop
             defaultValue=""
             onKeyDown={(e) => {
               if (e.key === "Enter") {
@@ -434,15 +418,13 @@ export default function JoinPage() {
             className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
           />
           <PrimaryButton onClick={() => handlePaidContinueRefSafe(plan)} disabled={sending}>
-            {sending ? "Sending link…" : "Continue to payment"}
+            {sending ? "Sending…" : "Continue to payment"}
           </PrimaryButton>
           <p className="col-span-full text-xs text-neutral-500">
-            Enter your email, then we’ll take you to payment. After paying, check your inbox to
-            confirm your account.
+            Enter your email, then go to payment. After paying, check your inbox to activate your account.
           </p>
         </div>
 
-        {/* Trust microcopy */}
         <div className="mt-3 text-[11px] text-neutral-500">
           Secure checkout by <span className="font-medium">Stripe</span> • Cancel any time
         </div>
@@ -450,9 +432,7 @@ export default function JoinPage() {
     );
   }
 
-  /* --------------------------
-     Render
-  ---------------------------*/
+  /* -------------------------------- Render -------------------------------- */
   return (
     <>
       {/* Sticky summary CTA (mobile) */}
@@ -497,7 +477,7 @@ export default function JoinPage() {
           }
         />
 
-        {/* Top tabs */}
+        {/* Tabs */}
         <div
           role="tablist"
           aria-label="Join or sign in"
@@ -625,7 +605,7 @@ export default function JoinPage() {
               </div>
             </div>
 
-            {/* More reassurance (CRO) */}
+            {/* Trust row */}
             <div className="mt-6 grid gap-2 sm:grid-cols-3 text-[12px] text-neutral-400">
               <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-3 py-2">
                 ✅ Secure checkout by Stripe
