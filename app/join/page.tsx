@@ -18,25 +18,11 @@ type Cycle = "month" | "year";
 
 const APP_URL =
   process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
-const API_BASE = (process.env.NEXT_PUBLIC_API_BASE ??
-  "https://tradescard-api.vercel.app").replace(/\/$/, "");
 
-// Display prices (purely for UI — not used for billing)
+// Display prices (UI only)
 const PRICE = {
   member: { month: 2.99, year: 29.0 },
   pro: { month: 7.99, year: 79.0 },
-} as const;
-
-// PUBLIC Stripe price ids for checkout (safe to expose; they’re not secrets)
-const PRICE_ID = {
-  member: {
-    month: process.env.NEXT_PUBLIC_STRIPE_PRICE_MEMBER_MONTH ?? "",
-    year: process.env.NEXT_PUBLIC_STRIPE_PRICE_MEMBER_YEAR ?? "",
-  },
-  pro: {
-    month: process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO_MONTH ?? "",
-    year: process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO_YEAR ?? "",
-  },
 } as const;
 
 const AUTH_ERROR_MAP: Record<string, string> = {
@@ -202,8 +188,7 @@ export default function JoinPage() {
       if (!data?.session?.user) return;
       if (!openInline) return;
 
-      // Logged in: use account email + user id
-      await startPaidCheckout(openInline, data.session.user.email ?? "", data.session.user.id);
+      await startPaidCheckout(openInline);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openInline]);
@@ -213,7 +198,7 @@ export default function JoinPage() {
   ---------------------------*/
   const isValidEmail = (v: string) => /^\S+@\S+\.\S+$/.test(v.trim());
 
-  async function sendMagicLink(targetEmail: string, redirectTo = "/offers") {
+  async function sendMagicLink(targetEmail: string, redirectTo: string) {
     const trimmed = targetEmail.trim();
     if (!trimmed || !isValidEmail(trimmed)) throw new Error("invalid_email");
     const { error: supaErr } = await supabase.auth.signInWithOtp({
@@ -223,49 +208,30 @@ export default function JoinPage() {
     if (supaErr) throw supaErr;
   }
 
-  function getPriceId(plan: PaidPlan, c: Cycle) {
-    const id = PRICE_ID[plan][c];
-    return id || undefined;
-  }
-
-  // The ONLY place that calls the checkout API
-  async function startPaidCheckout(
-    plan: PaidPlan,
-    emailForCheckout: string,
-    userId?: string
-  ) {
+  // The ONLY place that calls the checkout API (requires auth)
+  async function startPaidCheckout(plan: PaidPlan) {
     try {
       setBusy(true);
       setCheckoutError("");
 
-      const body = {
-        plan,
-        cycle,
-        email: emailForCheckout || undefined,
-        user_id: userId || undefined,
-        price_id: getPriceId(plan, cycle),
-        // only surface trial on Member monthly; API can ignore otherwise
-        trial: plan === "member" && cycle === "month" && showTrial ? true : false,
-      };
-
-      const res = await fetch(`${API_BASE}/api/checkout`, {
+      const res = await fetch(`/api/checkout`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ plan, cycle }),
       });
 
       if (!res.ok) {
+        // 401 means not signed in (guard server-side)
         const err = await res.json().catch(() => ({} as any));
-        throw new Error(err?.message || "Unable to start checkout");
+        throw new Error(err?.error || "Unable to start checkout");
       }
 
       const { url } = (await res.json()) as { url?: string };
       if (!url) throw new Error("No checkout URL returned");
 
-      // Track + redirect
       track(plan === "member" ? "join_member_click" : "join_pro_click", {
         cycle,
-        trial: body.trial,
+        trial: plan === "member" && cycle === "month" && showTrial ? true : false,
       });
       window.location.href = url;
     } catch (e: any) {
@@ -275,7 +241,7 @@ export default function JoinPage() {
     }
   }
 
-  // Free (Access) sign-up (kept as magic-link)
+  // Free (Access) sign-up (magic link)
   async function handleFreeJoin() {
     setInfo("");
     try {
@@ -303,7 +269,7 @@ export default function JoinPage() {
     const { data } = await supabase.auth.getSession();
 
     if (!data?.session?.user) {
-      // Logged out → open inline email capture for card-first checkout
+      // Logged out → open inline email capture to send magic link
       setOpenInline(plan);
       setFreeOpen(false);
       setSelectedPlan(plan);
@@ -311,8 +277,8 @@ export default function JoinPage() {
       return;
     }
 
-    // Logged in → go straight to Stripe using account email + user id
-    await startPaidCheckout(plan, data.session.user.email ?? "", data.session.user.id);
+    // Logged in → go straight to Stripe
+    await startPaidCheckout(plan);
   }
 
   // Submit paid email inline (logged-out card-first)
@@ -321,10 +287,20 @@ export default function JoinPage() {
     setInfo("");
     try {
       if (!isValidEmail(emailPaid)) throw new Error("Enter a valid email address.");
-      await startPaidCheckout(openInline, emailPaid);
+
+      // Send magic link that returns to this page with plan & cycle;
+      // the effect above will auto-start checkout once signed in.
+      const redirect = `/join?plan=${openInline}&cycle=${cycle}`;
+      setSending(true);
+      await sendMagicLink(emailPaid, redirect);
+      setSent(true);
+      setInfo("Check your inbox for your secure sign-in link to continue to checkout.");
     } catch (e: any) {
+      setSent(false);
       setCheckoutError(e?.message || "We couldn’t start checkout. Please try again.");
       paidInputRef.current?.focus();
+    } finally {
+      setSending(false);
     }
   }
 
@@ -354,7 +330,7 @@ export default function JoinPage() {
       ? `Continue — ${monthlyLabel}`
       : `Continue — ${yearlyLabel}`;
 
-  const showSticky = tab === "join" && !openInline; // hide when email box is open to avoid overlap
+  const showSticky = tab === "join" && !openInline;
 
   /* --------------------------
      Small UI pieces
@@ -434,7 +410,6 @@ export default function JoinPage() {
 
     const selected = selectedPlan === plan;
 
-    // CTA label logic (promo only on Member monthly)
     const ctaLabel =
       plan === "member" && cycle === "month" && showTrial
         ? TRIAL_COPY
@@ -513,11 +488,11 @@ export default function JoinPage() {
               onMouseDown={stop}
               className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
             />
-            <PrimaryButton onClick={handlePaidContinue} disabled={busy}>
-              {busy ? "Starting checkout…" : "Continue to payment"}
+            <PrimaryButton onClick={handlePaidContinue} disabled={sending}>
+              {sending ? "Sending link…" : "Continue to payment"}
             </PrimaryButton>
             <p className="col-span-full text-xs text-neutral-500">
-              We’ll take you to secure checkout. You’ll return here after payment.
+              We’ll email you a secure sign-in link, then take you to checkout.
             </p>
           </div>
         )}
@@ -662,7 +637,7 @@ export default function JoinPage() {
                   <PrimaryButton
                     onClick={() => {
                       setFreeOpen(true);
-                      setOpenInline(null); // only one email box at a time
+                      setOpenInline(null);
                       queueMicrotask(() => freeInputRef.current?.focus());
                     }}
                     className="self-start md:self-auto"
