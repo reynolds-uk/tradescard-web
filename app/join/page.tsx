@@ -11,6 +11,7 @@ import PrimaryButton from "@/components/PrimaryButton";
 import { useMe } from "@/lib/useMe";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 import { track } from "@/lib/track";
+import { API_BASE } from "@/lib/apiBase";
 
 type Plan = "access" | "member" | "pro";
 type PaidPlan = Exclude<Plan, "access">;
@@ -214,14 +215,25 @@ export default function JoinPage() {
       setBusy(true);
       setCheckoutError("");
 
-      const res = await fetch(`/api/checkout`, {
+      const { data } = await supabase.auth.getSession();
+      const user = data?.session?.user;
+      if (!user) throw new Error("Not signed in");
+
+      const res = await fetch(`${API_BASE}/api/checkout`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ plan, cycle }),
+        body: JSON.stringify({
+          user_id: user.id,
+          email: user.email,
+          plan,
+          billing: cycle === "year" ? "annual" : "monthly",
+          trial: plan === "member" && cycle === "month" && showTrial ? true : false,
+          next: "/welcome",
+          source: "/join",
+        }),
       });
 
       if (!res.ok) {
-        // 401 means not signed in (guard server-side)
         const err = await res.json().catch(() => ({} as any));
         throw new Error(err?.error || "Unable to start checkout");
       }
@@ -417,15 +429,29 @@ export default function JoinPage() {
         ? `Choose Member – ${price}`
         : `Choose Pro – ${price}`;
 
-    const selectThisPlan = () => {
+    const selectThisPlan = async () => {
       if (!selected) setSelectedPlan(plan);
+
+      const { data } = await supabase.auth.getSession();
+      const isLoggedIn = !!data?.session?.user;
+
+      if (!isLoggedIn) {
+        setOpenInline(plan);
+        setFreeOpen(false);
+        queueMicrotask(() => paidInputRef.current?.focus());
+      } else {
+        await startPaidCheckout(plan);
+      }
     };
 
     const stop = (e: any) => e.stopPropagation();
 
     return (
       <div className={`rounded-2xl border ${accentCls} bg-neutral-900 p-4`}>
-        <div className="flex items-center justify-between">
+        <div
+          className="flex items-center justify-between cursor-pointer"
+          onClick={selectThisPlan}
+        >
           <div className="flex items-center gap-2">
             <button
               type="button"
