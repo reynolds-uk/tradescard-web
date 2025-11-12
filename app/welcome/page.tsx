@@ -42,7 +42,7 @@ const API_BASE =
   "https://tradescard-api.vercel.app";
 
 /* -------------------------------------------------------------------------------------------------
-   Hook: confirm checkout once (handles ?cs=..., sends OTP if user not signed in)
+   Hook: confirm checkout once (handles ?cs=... or ?session_id=..., sends OTP if user not signed in)
 -------------------------------------------------------------------------------------------------- */
 function useConfirmCheckoutOnce() {
   const params = useSearchParams();
@@ -66,10 +66,20 @@ function useConfirmCheckoutOnce() {
     []
   );
 
+  // Track first render
+  const tracked = useRef(false);
+  useEffect(() => {
+    if (!tracked.current) {
+      tracked.current = true;
+      track("welcome_view");
+    }
+  }, []);
+
   // Confirm once
   const ran = useRef(false);
   useEffect(() => {
-    const cs = params.get("cs");
+    // Support either ?cs= or Stripe’s ?session_id=
+    const cs = params.get("cs") || params.get("session_id");
     if (!cs || ran.current) return;
     ran.current = true;
 
@@ -113,14 +123,14 @@ function useConfirmCheckoutOnce() {
 
         if (data?.ok) {
           track("welcome_view", { confirmed: true });
-          // Drop the ?cs= param and refresh data
+          // Drop handled params and refresh data
           router.replace("/welcome");
           router.refresh?.();
           return;
         }
 
-        if (data?.pending) {
-          // Payment not settled yet; keep page as-is (your existing copy covers it)
+        if (data?.pending || params.get("pending") === "1") {
+          // Payment not settled yet; surface gentle info but no error
           track("welcome_view", { pending: true });
           return;
         }
@@ -213,7 +223,7 @@ export default function WelcomePage() {
     []
   );
 
-  // Confirm checkout if `?cs=...`
+  // Confirm checkout if `?cs=` or `?session_id=`
   const {
     busy,
     err,
@@ -261,8 +271,8 @@ export default function WelcomePage() {
       const data = await res.json();
       if (!res.ok || !data?.url) throw new Error(data?.error || "Could not start checkout.");
       window.location.href = data.url;
-    } catch (e) {
-      // no-op: you may want to surface a toast
+    } catch {
+      /* no-op */
     }
   }
 
@@ -313,11 +323,6 @@ export default function WelcomePage() {
     } finally {
       setSaving(false);
     }
-  }
-
-  function skipForNow() {
-    track("welcome_skip", { tier });
-    window.location.href = tier === "access" ? "/offers" : "/account";
   }
 
   return (
