@@ -50,6 +50,7 @@ function useConfirmCheckoutOnce() {
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
 
   // Activation overlay state
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
@@ -78,30 +79,34 @@ function useConfirmCheckoutOnce() {
   // Confirm once
   const ran = useRef(false);
   useEffect(() => {
-    // Support either ?cs= or Stripe’s ?session_id=
     const cs = params.get("cs") || params.get("session_id");
     if (!cs || ran.current) return;
     ran.current = true;
 
     (async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10_000);
+
       try {
         setBusy(true);
         setErr(null);
+        setPending(false);
 
         const res = await fetch(
           `${API_BASE}/api/confirm-checkout?cs=${encodeURIComponent(cs)}`,
-          { credentials: "include" }
+          { credentials: "include", cache: "no-store", signal: controller.signal }
         );
 
         if (res.status === 401) {
           // Not signed in yet — fetch email from Stripe session and send the magic link
           setPendingInfo("Finalising your membership…");
           const s = await fetch(
-            `${API_BASE}/api/checkout/session?session_id=${encodeURIComponent(cs)}`
+            `${API_BASE}/api/checkout/session?session_id=${encodeURIComponent(cs)}`,
+            { cache: "no-store" }
           );
           if (!s.ok) throw new Error("Could not retrieve checkout session details.");
           const { email } = (await s.json()) as { email?: string };
-          if (!email) throw new Error("We couldn't determine your email for activation.");
+          if (!email) throw new Error("We couldn’t determine your email for activation.");
 
           setPendingEmail(email);
 
@@ -119,33 +124,40 @@ function useConfirmCheckoutOnce() {
           return;
         }
 
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
 
-        if (data?.ok) {
+        if (data?.ok || data?.need_sign_in) {
+          // Success path (or webhook has written) — drop params & refresh
           track("welcome_view", { confirmed: true });
-          // Drop handled params and refresh data
-          router.replace("/welcome");
+          router.replace("/welcome"); // removes ?cs= from the URL
           router.refresh?.();
           return;
         }
 
         if (data?.pending || params.get("pending") === "1") {
-          // Payment not settled yet; surface gentle info but no error
+          setPending(true);
           track("welcome_view", { pending: true });
           return;
         }
 
         if (data?.error) {
           setErr(data.error);
-        } else {
-          setErr("We couldn’t confirm your membership.");
+        } else if (!res.ok) {
+          setErr(`We couldn’t confirm your membership (HTTP ${res.status}).`);
         }
       } catch (e: any) {
-        setErr(e?.message || "Network error confirming checkout.");
+        // AbortError → show gentle pending instead of a scary error
+        if (e?.name === "AbortError") {
+          setPending(true);
+        } else {
+          setErr(e?.message || "Network error confirming checkout.");
+        }
       } finally {
+        clearTimeout(timer);
         setBusy(false);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params, router, supabase]);
 
   // Cooldown tick
@@ -187,6 +199,7 @@ function useConfirmCheckoutOnce() {
 
   return {
     busy,
+    pending,
     err,
     showActivationOverlay,
     pendingEmail,
@@ -226,6 +239,7 @@ export default function WelcomePage() {
   // Confirm checkout if `?cs=` or `?session_id=`
   const {
     busy,
+    pending,
     err,
     showActivationOverlay,
     pendingEmail,
@@ -352,11 +366,16 @@ export default function WelcomePage() {
         />
 
         {/* Inline status from confirm step */}
-        {(busy || err || showResume) && (
+        {(busy || err || pending || showResume) && (
           <div className="mb-4 space-y-2">
             {busy && (
               <div className="rounded-lg border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-blue-200 text-sm">
                 Activating your membership…
+              </div>
+            )}
+            {pending && !busy && !err && (
+              <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-amber-200 text-sm">
+                Payment is settling. This usually takes a moment — we’ll update automatically.
               </div>
             )}
             {err && (
@@ -379,7 +398,7 @@ export default function WelcomePage() {
           </div>
         )}
 
-        {shouldShowTrial({ tier } as any) && (
+        {showTrial && (
           <div className="mb-4 rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-200">
             Limited-time offer: {TRIAL_COPY}
           </div>
