@@ -45,7 +45,11 @@ const API_BASE =
 
 /* -------------------------------------------------------------------------------------------------
    Hook: confirm checkout with polling (handles ?cs=... or ?session_id=..., sends OTP if not signed in)
-   - now takes `alreadyPaid` so we can skip everything once we *know* the account is active
+
+   IMPORTANT CHANGE:
+   - If the confirm endpoint *never* returns 401 but only `{ pending: true }`,
+     we now fall back to sending the magic link anyway (once per session/email)
+     and stop polling, instead of spinning indefinitely.
 -------------------------------------------------------------------------------------------------- */
 function useConfirmCheckoutWithPolling(alreadyPaid: boolean) {
   const params = useSearchParams();
@@ -95,7 +99,48 @@ function useConfirmCheckoutWithPolling(alreadyPaid: boolean) {
 
     let cancelled = false;
     let attempts = 0;
-    const maxAttempts = 20; // ~60s if we poll every 3s
+    const maxAttempts = 20; // safeguard – but we now bail earlier when we send the link
+
+    async function sendMagicLinkForSession() {
+      // Look up the email used for this checkout session
+      const s = await fetch(
+        `${API_BASE}/api/checkout/session?session_id=${encodeURIComponent(
+          sessionId,
+        )}`,
+      );
+      if (!s.ok) {
+        throw new Error("Could not retrieve checkout session details.");
+      }
+
+      const { email } = (await s.json()) as { email?: string };
+      if (!email) {
+        throw new Error("We couldn’t determine your email for activation.");
+      }
+
+      const normalisedEmail = email.trim().toLowerCase();
+      setPendingEmail(normalisedEmail);
+
+      // Only send the *first* magic link automatically for this
+      // checkout session in this browser. Further refreshes of this
+      // tab won't keep re-sending.
+      const sendKey = `checkout_activation_sent_${sessionId}_${normalisedEmail}`;
+      if (!window.localStorage.getItem(sendKey)) {
+        const { error: otpErr } = await supabase.auth.signInWithOtp({
+          email: normalisedEmail,
+          options: {
+            emailRedirectTo: new URL("/welcome", APP_URL).toString(),
+          },
+        });
+        if (otpErr) throw otpErr;
+
+        window.localStorage.setItem(sendKey, "1");
+      }
+
+      setPendingInfo(
+        "We’ve emailed you a secure sign-in link. Open it to activate your account.",
+      );
+      setCountdown(30);
+    }
 
     async function poll() {
       if (cancelled) return;
@@ -116,54 +161,12 @@ function useConfirmCheckoutWithPolling(alreadyPaid: boolean) {
         // 401 = API says “membership is ready, but user must sign in”
         if (res.status === 401) {
           setPendingInfo("Finalising your membership…");
-
-          // Look up the email used for this checkout session
-          const s = await fetch(
-            `${API_BASE}/api/checkout/session?session_id=${encodeURIComponent(
-              sessionId,
-            )}`,
-          );
-          if (!s.ok) {
-            throw new Error(
-              "Could not retrieve checkout session details.",
-            );
-          }
-          const { email } = (await s.json()) as { email?: string };
-          if (!email) {
-            throw new Error(
-              "We couldn’t determine your email for activation.",
-            );
-          }
-
-          const normalisedEmail = email.trim().toLowerCase();
-          setPendingEmail(normalisedEmail);
-
-          // Only send the *first* magic link automatically for this
-          // checkout session in this browser. Further refreshes of this
-          // tab won't keep re-sending.
-          const sendKey = `checkout_activation_sent_${sessionId}_${normalisedEmail}`;
-          if (!window.localStorage.getItem(sendKey)) {
-            const { error: otpErr } = await supabase.auth.signInWithOtp({
-              email: normalisedEmail,
-              options: {
-                emailRedirectTo: new URL("/welcome", APP_URL).toString(),
-              },
-            });
-            if (otpErr) throw otpErr;
-
-            window.localStorage.setItem(sendKey, "1");
-          }
-
-          setPendingInfo(
-            "We’ve emailed you a secure sign-in link. Open it to activate your account.",
-          );
-          setCountdown(30);
-
+          await sendMagicLinkForSession();
           // We’ve handed off to email, no more polling for this tab
           return;
         }
 
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
 
         if (data?.ok) {
           track("welcome_view", { confirmed: true });
@@ -174,12 +177,13 @@ function useConfirmCheckoutWithPolling(alreadyPaid: boolean) {
         }
 
         if (data?.pending) {
-          // Payment is still settling / webhook not finished
+          // Payment / membership sync is still catching up.
+          // Fallback: still send a magic link so the user can complete sign-in,
+          // and *stop polling* for this tab.
           track("welcome_view", { pending: true });
+          setPendingInfo("We’re setting up your membership. This usually takes a few seconds…");
 
-          if (attempts < maxAttempts && !cancelled) {
-            setTimeout(poll, 3000);
-          }
+          await sendMagicLinkForSession();
           return;
         }
 
@@ -188,8 +192,17 @@ function useConfirmCheckoutWithPolling(alreadyPaid: boolean) {
         } else {
           setErr("We couldn’t confirm your membership.");
         }
+
+        // If we got here and still have attempts left, we can retry a bit,
+        // but this path should be rare.
+        if (attempts < maxAttempts && !cancelled) {
+          setTimeout(poll, 3000);
+        }
       } catch (e: any) {
         setErr(e?.message || "Network error confirming checkout.");
+        if (attempts < maxAttempts && !cancelled) {
+          setTimeout(poll, 3000);
+        }
       } finally {
         setBusy(false);
       }
@@ -439,6 +452,9 @@ export default function WelcomePage() {
     }
   }
 
+  const showInlinePending =
+    busy && !showActivationOverlay && !pendingEmail;
+
   return (
     <>
       {showActivationOverlay && pendingEmail && (
@@ -466,9 +482,9 @@ export default function WelcomePage() {
         />
 
         {/* Inline status from confirm step */}
-        {(busy || err || showResume) && (
+        {(showInlinePending || err || showResume) && (
           <div className="mb-4 space-y-2">
-            {busy && (
+            {showInlinePending && (
               <div className="rounded-lg border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-blue-200 text-sm">
                 Activating your membership…
               </div>
