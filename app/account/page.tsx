@@ -108,16 +108,32 @@ export default function AccountPage() {
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // Profile fields
   const [name, setName] = useState(profile?.name ?? "");
-  const [savingName, setSavingName] = useState(false);
-  const [nameSaved, setNameSaved] = useState(false);
+  const [phone, setPhone] = useState((profile as any)?.phone ?? "");
+  const [editingName, setEditingName] = useState(!profile?.name);
+  const [editingPhone, setEditingPhone] = useState(!(profile as any)?.phone);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileSaved, setProfileSaved] = useState(false);
+
   const [error, setError] = useState<string>("");
 
   const [rewards, setRewards] = useState<RewardsSummary | null>(null);
   const actionsRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => setReady(true), []);
-  useEffect(() => setName(profile?.name ?? ""), [profile?.name]);
+
+  // When profile changes (first load / refresh) seed form + editing flags
+  useEffect(() => {
+    setName(profile?.name ?? "");
+    setEditingName(!profile?.name);
+  }, [profile?.name]);
+
+  useEffect(() => {
+    const p = (profile as any)?.phone as string | undefined;
+    setPhone(p ?? "");
+    setEditingPhone(!p);
+  }, [(profile as any)?.phone]);
 
   // Load rewards once signed in
   useEffect(() => {
@@ -175,11 +191,13 @@ export default function AccountPage() {
     }
   };
 
-  const saveName = async () => {
+  const saveProfile = async () => {
     if (!userId) return;
     try {
-      setSavingName(true);
-      setNameSaved(false);
+      setSavingProfile(true);
+      setProfileSaved(false);
+      setError("");
+
       const { error: upErr } = await supabase
         .from("profiles")
         .upsert(
@@ -187,18 +205,33 @@ export default function AccountPage() {
             user_id: userId,
             email: profile?.email ?? null,
             name: name || null,
+            // assumes a `phone` column exists on profiles
+            phone: phone || null,
             updated_at: new Date().toISOString(),
           },
           { onConflict: "user_id" },
         );
+
       if (upErr) throw upErr;
-      setNameSaved(true);
-      setTimeout(() => setNameSaved(false), 2000);
+
+      setEditingName(false);
+      setEditingPhone(false);
+      setProfileSaved(true);
+      setTimeout(() => setProfileSaved(false), 2000);
     } catch (e: any) {
       setError(e?.message || "We couldn’t save your details just now.");
     } finally {
-      setSavingName(false);
+      setSavingProfile(false);
     }
+  };
+
+  const resetProfileEdits = () => {
+    setName(profile?.name ?? "");
+    const p = (profile as any)?.phone as string | undefined;
+    setPhone(p ?? "");
+    setEditingName(!profile?.name);
+    setEditingPhone(!p);
+    setProfileSaved(false);
   };
 
   const signOut = async () => {
@@ -229,8 +262,13 @@ export default function AccountPage() {
   const stickyAction = () => {
     if (canJoin) return startMembership("member");
     if (canUpgrade) return startMembership("pro");
-    if (canDowngrade)
-      document.getElementById("billing-portal-click")?.click();
+    if (canDowngrade) {
+      // Call billing portal via the billing card button
+      const btn = document.querySelector<HTMLButtonElement>(
+        'button[data-billing-button="true"]',
+      );
+      btn?.click();
+    }
   };
   const showSticky =
     ready &&
@@ -257,10 +295,9 @@ export default function AccountPage() {
             </PrimaryButton>
             <div className="mt-2 text-center text-[11px] text-neutral-400">
               {canJoin && "Billed monthly • Cancel any time"}
-              {canUpgrade &&
-                "Pro unlocks bigger boosts & Pro-only offers"}
+              {canUpgrade && "Pro unlocks bigger boosts & Pro-only offers"}
               {canDowngrade &&
-                "Manage plan, payment method or cancel"}
+                "Manage plan, payment method or cancel from here"}
             </div>
           </div>
         </div>
@@ -322,16 +359,10 @@ export default function AccountPage() {
               <div className="rounded-2xl border border-neutral-800 p-5 bg-gradient-to-br from-neutral-900 to-neutral-950">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="text-sm text-neutral-400">
-                      Membership
-                    </div>
+                    <div className="text-sm text-neutral-400">Membership</div>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
-                      <div className="text-2xl font-semibold">
-                        TradeCard
-                      </div>
-                      <Badge tone="muted">
-                        {TIER_META[tier].label}
-                      </Badge>
+                      <div className="text-2xl font-semibold">TradeCard</div>
+                      <Badge tone="muted">{TIER_META[tier].label}</Badge>
                       {statusBadge(status)}
                     </div>
                     <p className="mt-2 text-sm text-neutral-300">
@@ -376,9 +407,7 @@ export default function AccountPage() {
                 <div className="flex items-center justify-between">
                   <div className="font-medium">Rewards</div>
                   <div className="text-xs text-neutral-400">
-                    {isActive
-                      ? "Eligible while active"
-                      : "Not eligible"}
+                    {isActive ? "Eligible while active" : "Not eligible"}
                   </div>
                 </div>
                 <div className="mt-3 grid gap-3 sm:grid-cols-3">
@@ -387,9 +416,7 @@ export default function AccountPage() {
                       Points this month
                     </div>
                     <div className="mt-1 text-2xl font-semibold">
-                      {loading
-                        ? "…"
-                        : rewards?.points_this_month ?? "—"}
+                      {loading ? "…" : rewards?.points_this_month ?? "—"}
                     </div>
                   </div>
                   <div className="rounded-lg border border-neutral-800 p-3">
@@ -397,22 +424,18 @@ export default function AccountPage() {
                       Lifetime points
                     </div>
                     <div className="mt-1 text-2xl font-semibold">
-                      {loading
-                        ? "…"
-                        : rewards?.lifetime_points ?? "—"}
+                      {loading ? "…" : rewards?.lifetime_points ?? "—"}
                     </div>
                   </div>
                   <div className="rounded-lg border border-neutral-800 p-3">
-                    <div className="text-sm text-neutral-400">
-                      Status
-                    </div>
+                    <div className="text-sm text-neutral-400">Status</div>
                     <div className="mt-1">{statusBadge(status)}</div>
                   </div>
                 </div>
                 <p className="mt-3 text-sm text-neutral-400">
-                  Cancelling or downgrading stops new entries
-                  immediately. Lifetime points remain on your profile
-                  but do not qualify you for draws while inactive.
+                  Cancelling or downgrading stops new entries immediately.
+                  Lifetime points remain on your profile but do not qualify you
+                  for draws while inactive.
                 </p>
               </div>
 
@@ -425,12 +448,8 @@ export default function AccountPage() {
 
                 {canJoin && (
                   <div className="flex flex-wrap gap-2">
-                    <PrimaryButton
-                      onClick={() => startMembership("member")}
-                    >
-                      {showTrial
-                        ? TRIAL_COPY
-                        : "Join as Member (£2.99/mo)"}
+                    <PrimaryButton onClick={() => startMembership("member")}>
+                      {showTrial ? TRIAL_COPY : "Join as Member (£2.99/mo)"}
                     </PrimaryButton>
                     <button
                       onClick={() => startMembership("pro")}
@@ -443,21 +462,11 @@ export default function AccountPage() {
 
                 {canUpgrade && (
                   <div className="flex flex-wrap gap-2">
-                    <PrimaryButton
-                      onClick={() => startMembership("pro")}
-                    >
+                    <PrimaryButton onClick={() => startMembership("pro")}>
                       Upgrade to Pro
                     </PrimaryButton>
-                    <button
-                      onClick={() =>
-                        document
-                          .getElementById("billing-portal-click")
-                          ?.click()
-                      }
-                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
-                    >
-                      Manage billing / Cancel
-                    </button>
+                    {/* Direct ManageBillingButton so it actually works */}
+                    <ManageBillingButton className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800" />
                   </div>
                 )}
 
@@ -467,39 +476,21 @@ export default function AccountPage() {
                       onClick={() => startMembership("member")}
                       className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
                     >
-                      Switch to Member
+                      Downgrade to Member
                     </button>
-                    <button
-                      onClick={() =>
-                        document
-                          .getElementById("billing-portal-click")
-                          ?.click()
-                      }
-                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
-                    >
-                      Manage billing / Cancel
-                    </button>
+                    <ManageBillingButton className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800" />
                   </div>
                 )}
 
                 {!canJoin && !canUpgrade && !canDowngrade && (
                   <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() =>
-                        document
-                          .getElementById("billing-portal-click")
-                          ?.click()
-                      }
-                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
-                    >
-                      Manage billing / Cancel
-                    </button>
+                    <ManageBillingButton className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800" />
                   </div>
                 )}
 
                 <p className="mt-3 text-xs text-neutral-500">
-                  You can cancel any time. Cancelling stops reward
-                  entries immediately.
+                  You can cancel any time. Cancelling stops reward entries
+                  immediately.
                 </p>
               </div>
             </section>
@@ -509,57 +500,141 @@ export default function AccountPage() {
               {/* Your details */}
               <div className="rounded-xl border border-neutral-800 p-5">
                 <div className="font-medium mb-3">Your details</div>
-                <div className="grid gap-3">
+                <div className="grid gap-4">
+                  {/* Name row */}
                   <div>
-                    <label
-                      htmlFor="name"
-                      className="block text-xs text-neutral-400 mb-1"
-                    >
-                      Name{" "}
-                      <span className="text-neutral-500">
-                        (optional)
-                      </span>
-                    </label>
-                    <input
-                      id="name"
-                      type="text"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
-                      placeholder="e.g. Alex Smith"
-                    />
-                    <div className="mt-2 flex gap-2">
-                      <PrimaryButton
-                        onClick={saveName}
-                        disabled={savingName}
+                    <div className="flex items-center justify-between mb-1">
+                      <label
+                        htmlFor="name"
+                        className="block text-xs text-neutral-400"
                       >
-                        {savingName ? "Saving…" : "Save"}
+                        Name{" "}
+                        <span className="text-neutral-500">(optional)</span>
+                      </label>
+                      {!editingName && (
+                        <button
+                          type="button"
+                          onClick={() => setEditingName(true)}
+                          className="text-xs text-neutral-400 hover:text-neutral-200 underline underline-offset-2"
+                        >
+                          Edit
+                        </button>
+                      )}
+                    </div>
+
+                    {editingName ? (
+                      <>
+                        <input
+                          id="name"
+                          type="text"
+                          value={name}
+                          onChange={(e) => setName(e.target.value)}
+                          className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
+                          placeholder="e.g. Alex Smith"
+                        />
+                      </>
+                    ) : (
+                      <div className="text-sm text-neutral-100">
+                        {name || <span className="text-neutral-500">Add your name</span>}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Phone row */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label
+                        htmlFor="phone"
+                        className="block text-xs text-neutral-400"
+                      >
+                        Phone{" "}
+                        <span className="text-neutral-500">
+                          (recommended for rewards contact)
+                        </span>
+                      </label>
+                      {!editingPhone && (
+                        <button
+                          type="button"
+                          onClick={() => setEditingPhone(true)}
+                          className="text-xs text-neutral-400 hover:text-neutral-200 underline underline-offset-2"
+                        >
+                          Edit
+                        </button>
+                      )}
+                    </div>
+
+                    {editingPhone ? (
+                      <>
+                        <input
+                          id="phone"
+                          type="tel"
+                          value={phone}
+                          onChange={(e) => setPhone(e.target.value)}
+                          className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
+                          placeholder="e.g. 07..."
+                        />
+                        <p className="mt-1 text-xs text-neutral-500">
+                          We’ll only use this to contact you about wins or
+                          support, never for spam.
+                        </p>
+                      </>
+                    ) : (
+                      <div className="text-sm text-neutral-100">
+                        {phone || (
+                          <span className="text-neutral-500">
+                            Add a phone number
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Save / cancel for profile fields */}
+                  {(editingName || editingPhone) && (
+                    <div className="flex flex-wrap gap-2">
+                      <PrimaryButton
+                        onClick={saveProfile}
+                        disabled={savingProfile}
+                      >
+                        {savingProfile ? "Saving…" : "Save details"}
                       </PrimaryButton>
-                      {nameSaved && (
+                      <button
+                        type="button"
+                        onClick={resetProfileEdits}
+                        className="px-3 py-2 rounded-lg border border-neutral-700 bg-neutral-900 text-sm hover:bg-neutral-800"
+                      >
+                        Cancel
+                      </button>
+                      {profileSaved && !savingProfile && (
                         <span className="text-xs text-green-300 self-center">
                           Saved ✓
                         </span>
                       )}
                     </div>
-                  </div>
+                  )}
+                  {!editingName && !editingPhone && profileSaved && (
+                    <div className="text-xs text-green-300">Saved ✓</div>
+                  )}
 
+                  {/* Email */}
                   <div className="text-sm text-neutral-300">
                     <div className="opacity-60">Email</div>
-                    <div className="font-mono truncate max-w-xs">
+                    <div className="font-mono truncate max-w-full">
                       {profile?.email ?? "—"}
                     </div>
                   </div>
+
+                  {/* Member ID */}
                   <div className="text-sm text-neutral-300">
                     <div className="opacity-60">Member ID</div>
                     <div className="flex items-center gap-2">
-                      <span className="font-mono truncate max-w-xs">
+                      <span className="font-mono truncate max-w-xs break-all">
                         {userId}
                       </span>
                       <button
                         className="rounded bg-neutral-800 px-2 py-0.5 text-xs hover:bg-neutral-700"
                         onClick={() =>
-                          userId &&
-                          navigator.clipboard.writeText(userId)
+                          userId && navigator.clipboard.writeText(userId)
                         }
                       >
                         Copy
@@ -576,17 +651,12 @@ export default function AccountPage() {
                   Manage your plan, update card, view invoices or cancel.
                 </p>
                 <div className="mt-3">
-                  {/* Hidden helper so other buttons can trigger the billing portal */}
-                  <button
-                    id="billing-portal-click"
-                    type="button"
-                    className="hidden"
-                    onClick={() => {
-                      // This will be handled by the ManageBillingButton
-                      // which triggers the Stripe customer portal.
-                    }}
+                  {/* This button is the canonical billing trigger; other buttons can click it via data attribute */}
+                  <ManageBillingButton
+                    className="mt-1"
+                    // @ts-expect-error allow data attribute
+                    data-billing-button="true"
                   />
-                  <ManageBillingButton className="mt-1" />
                 </div>
                 <div className="mt-3 text-xs text-neutral-500">
                   Next renewal: {prettyDate(renewal)}
