@@ -104,9 +104,7 @@ function useConfirmCheckoutWithPolling() {
 
       try {
         const res = await fetch(
-          `${API_BASE}/api/confirm-checkout?cs=${encodeURIComponent(
-            sessionId
-          )}`,
+          `${API_BASE}/api/confirm-checkout?cs=${encodeURIComponent(sessionId as string)}`,
           { credentials: "include" }
         );
 
@@ -116,9 +114,7 @@ function useConfirmCheckoutWithPolling() {
 
           // Look up the email used for this checkout session
           const s = await fetch(
-            `${API_BASE}/api/checkout/session?session_id=${encodeURIComponent(
-              sessionId
-            )}`
+            `${API_BASE}/api/checkout/session?session_id=${encodeURIComponent(sessionId as string)}`
           );
           if (!s.ok) throw new Error("Could not retrieve checkout session details.");
           const { email } = (await s.json()) as { email?: string };
