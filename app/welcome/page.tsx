@@ -45,7 +45,7 @@ const API_BASE =
 
 /* -------------------------------------------------------------------------------------------------
    Hook: confirm checkout with polling (handles ?cs=... or ?session_id=..., sends OTP if not signed in)
-   - now takes `alreadyPaid` so we can skip everything once we *know* the account is active
+   - takes `alreadyPaid` so we can skip everything once we *know* the account is active
 -------------------------------------------------------------------------------------------------- */
 function useConfirmCheckoutWithPolling(alreadyPaid: boolean) {
   const params = useSearchParams();
@@ -59,6 +59,7 @@ function useConfirmCheckoutWithPolling(alreadyPaid: boolean) {
   const [pendingInfo, setPendingInfo] = useState<string>("");
   const [resending, setResending] = useState(false);
   const [countdown, setCountdown] = useState(0); // seconds
+  const [activated, setActivated] = useState(false);
 
   const supabase = useMemo(
     () =>
@@ -137,6 +138,7 @@ function useConfirmCheckoutWithPolling(alreadyPaid: boolean) {
 
           const normalisedEmail = email.trim().toLowerCase();
           setPendingEmail(normalisedEmail);
+          setActivated(false);
 
           // Only send the *first* magic link automatically for this
           // checkout session in this browser. Further refreshes of this
@@ -215,7 +217,7 @@ function useConfirmCheckoutWithPolling(alreadyPaid: boolean) {
 
   // Resend magic link (explicit user action – allowed even if we've sent one before)
   const resend = async () => {
-    if (!pendingEmail || countdown > 0 || resending) return;
+    if (!pendingEmail || countdown > 0 || resending || activated) return;
     setResending(true);
     setCountdown(30);
     try {
@@ -233,8 +235,9 @@ function useConfirmCheckoutWithPolling(alreadyPaid: boolean) {
     }
   };
 
+  const showActivationOverlay = !!pendingEmail && !activated;
+
   // If overlay is visible, lock scroll
-  const showActivationOverlay = !!pendingEmail;
   useEffect(() => {
     if (!showActivationOverlay) return;
     const { body } = document;
@@ -245,6 +248,13 @@ function useConfirmCheckoutWithPolling(alreadyPaid: boolean) {
     };
   }, [showActivationOverlay]);
 
+  const handleActivated = () => {
+    setActivated(true);
+    setPendingEmail(null);
+    setPendingInfo("");
+    setCountdown(0);
+  };
+
   return {
     busy,
     err,
@@ -254,7 +264,8 @@ function useConfirmCheckoutWithPolling(alreadyPaid: boolean) {
     resend,
     resending,
     countdown,
-    canResend: countdown === 0 && !!pendingEmail,
+    canResend: countdown === 0 && !!pendingEmail && !activated,
+    onActivated: handleActivated,
   };
 }
 
@@ -273,10 +284,15 @@ export default function WelcomePage() {
     null,
   );
 
+  const memberTier = member?.tier as Tier | undefined;
+  const tierLoaded = linkedTierOverride !== null || member !== undefined;
   const effectiveTier: Tier =
-    linkedTierOverride ?? ((member?.tier as Tier) ?? "access");
-  const showTrial = shouldShowTrial({ tier: effectiveTier } as any);
-  const isPaidTier = effectiveTier !== "access";
+    linkedTierOverride ?? (memberTier ?? "access");
+  const displayTier: Tier | null = tierLoaded ? effectiveTier : null;
+
+  const showTrial =
+    tierLoaded && shouldShowTrial({ tier: effectiveTier } as any);
+  const isPaidTier = tierLoaded && effectiveTier !== "access";
 
   const params = useSearchParams();
   const router = useRouter();
@@ -301,7 +317,8 @@ export default function WelcomePage() {
     resending,
     countdown,
     canResend,
-  } = useConfirmCheckoutWithPolling(isPaidTier);
+    onActivated,
+  } = useConfirmCheckoutWithPolling(!!isPaidTier);
 
   // After sign-in: link Stripe subscription → Supabase user (if needed)
   const linkAttemptedRef = useRef(false);
@@ -368,7 +385,7 @@ export default function WelcomePage() {
     (params.get("cycle") as "month" | "year" | null) || null;
   const showResume =
     params.get("continue") === "1" &&
-    effectiveTier === "access" &&
+    displayTier === "access" &&
     wantedPlan &&
     wantedCycle;
 
@@ -393,7 +410,10 @@ export default function WelcomePage() {
     try {
       localStorage.setItem("join_wanted_plan", plan);
     } catch {}
-    track("welcome_cta_join_member", { plan, trial: showTrial });
+    track("welcome_cta_join_member", {
+      plan,
+      trial: !!showTrial,
+    });
     window.location.href = "/join";
   }
 
@@ -403,7 +423,9 @@ export default function WelcomePage() {
       await navigator.clipboard.writeText(userId);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {}
+    } catch {
+      /* ignore */
+    }
   }
 
   async function saveAndContinue() {
@@ -428,16 +450,25 @@ export default function WelcomePage() {
       if (upErr) throw upErr;
 
       setSavedOnce(true);
-      track("welcome_profile_saved", { tier: effectiveTier });
+      track("welcome_profile_saved", {
+        tier: displayTier ?? "unknown",
+      });
 
       window.location.href =
-        effectiveTier === "access" ? "/offers" : "/account";
+        displayTier === "access" ? "/offers" : "/account";
     } catch (e: any) {
       setError(e?.message || "We couldn’t save your details just now.");
     } finally {
       setSaving(false);
     }
   }
+
+  const cardLabel = displayTier
+    ? TIER_COPY[displayTier].label
+    : "—";
+  const cardBlurb = displayTier
+    ? TIER_COPY[displayTier].blurb
+    : "We’re setting up your membership. This usually takes a few seconds.";
 
   return (
     <>
@@ -449,6 +480,7 @@ export default function WelcomePage() {
           canResend={canResend}
           countdown={countdown}
           resending={resending}
+          onActivated={onActivated}
         />
       )}
 
@@ -493,7 +525,7 @@ export default function WelcomePage() {
           </div>
         )}
 
-        {shouldShowTrial({ tier: effectiveTier } as any) && (
+        {showTrial && (
           <div className="mb-4 rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-200">
             Limited-time offer: {TRIAL_COPY}
           </div>
@@ -514,9 +546,11 @@ export default function WelcomePage() {
               <div className="mt-3 grid grid-cols-3 gap-2">
                 <div className="rounded-lg border border-neutral-800 p-3 text-center">
                   <div className="text-xl font-semibold">
-                    {TIER_COPY[effectiveTier].label}
+                    {cardLabel}
                   </div>
-                  <div className="mt-1 text-xs text-neutral-400">Tier</div>
+                  <div className="mt-1 text-xs text-neutral-400">
+                    Tier
+                  </div>
                 </div>
 
                 <div className="rounded-lg border border-neutral-800 p-3 text-center">
@@ -547,7 +581,7 @@ export default function WelcomePage() {
             <aside className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
               <div className="font-medium">What next?</div>
               <p className="mt-1 text-sm text-neutral-300">
-                {TIER_COPY[effectiveTier].blurb}
+                {cardBlurb}
               </p>
 
               <div className="mt-3 grid gap-2">
@@ -557,7 +591,7 @@ export default function WelcomePage() {
                   </PrimaryButton>
                 </Link>
 
-                {effectiveTier !== "access" ? (
+                {displayTier && displayTier !== "access" ? (
                   <>
                     <Link href="/benefits" className="block">
                       <button className="w-full rounded-xl border border-neutral-700 bg-neutral-900 px-4 py-2 font-medium hover:bg-neutral-800">
@@ -616,7 +650,8 @@ export default function WelcomePage() {
                 htmlFor="name"
                 className="block text-xs text-neutral-400 mb-1"
               >
-                Your name <span className="text-neutral-500">(optional)</span>
+                Your name{" "}
+                <span className="text-neutral-500">(optional)</span>
               </label>
               <input
                 id="name"
@@ -632,15 +667,17 @@ export default function WelcomePage() {
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <PrimaryButton onClick={saveAndContinue} disabled={saving}>
-              {effectiveTier === "access"
+              {displayTier === "access"
                 ? "Save & continue to offers"
                 : "Save & go to my account"}
             </PrimaryButton>
-            {effectiveTier === "access" && (
+            {displayTier === "access" && (
               <button
                 type="button"
                 onClick={() => {
-                  track("welcome_skip", { tier: effectiveTier });
+                  track("welcome_skip", {
+                    tier: displayTier ?? "unknown",
+                  });
                   router.push("/offers");
                 }}
                 className="rounded-xl border border-neutral-700 bg-neutral-900 px-4 py-2 text-sm font-medium hover:bg-neutral-800"
