@@ -330,8 +330,8 @@ export default function WelcomePage() {
   const [savedOnce, setSavedOnce] = useState(false);
   const [error, setError] = useState("");
 
-  // UI helpers
-  the [copied, setCopied] = useState(false);
+    // UI helpers
+  const [copied, setCopied] = useState(false);
   const accessCta = showTrial ? TRIAL_COPY : "Become a Member (£2.99/mo)";
 
   // Prefill once profile lands
