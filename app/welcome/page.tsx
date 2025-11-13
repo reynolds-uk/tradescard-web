@@ -78,8 +78,10 @@ function useConfirmCheckoutWithPolling() {
 
   useEffect(() => {
     // Support either ?session_id= or ?cs=
-    const sessionId = params.get("session_id") || params.get("cs");
+    const rawSessionId = params.get("session_id") ?? params.get("cs");
     const pendingFlag = params.get("pending");
+    const sessionId = rawSessionId ?? "";
+
     if (!sessionId || pendingFlag !== "1") return;
 
     let cancelled = false;
@@ -329,7 +331,7 @@ export default function WelcomePage() {
   const [error, setError] = useState("");
 
   // UI helpers
-  const [copied, setCopied] = useState(false);
+  the [copied, setCopied] = useState(false);
   const accessCta = showTrial ? TRIAL_COPY : "Become a Member (£2.99/mo)";
 
   // Prefill once profile lands
