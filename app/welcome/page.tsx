@@ -256,8 +256,13 @@ export default function WelcomePage() {
     null,
   );
 
+  // Prefer: linked tier → members.tier → profiles.tier → access
   const effectiveTier: Tier =
-    linkedTierOverride ?? ((member?.tier as Tier) ?? "access");
+    linkedTierOverride ??
+    ((member?.tier as Tier | undefined) ??
+      (profile?.tier as Tier | undefined) ??
+      "access");
+
   const showTrial = shouldShowTrial({ tier: effectiveTier } as any);
 
   const params = useSearchParams();
@@ -330,7 +335,7 @@ export default function WelcomePage() {
   const [savedOnce, setSavedOnce] = useState(false);
   const [error, setError] = useState("");
 
-    // UI helpers
+  // UI helpers
   const [copied, setCopied] = useState(false);
   const accessCta = showTrial ? TRIAL_COPY : "Become a Member (£2.99/mo)";
 
