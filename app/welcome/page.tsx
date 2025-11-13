@@ -43,12 +43,7 @@ const API_BASE =
   "https://tradescard-api.vercel.app";
 
 /* -------------------------------------------------------------------------------------------------
-   Hook: confirm checkout with polling
-   - Reads ?session_id or ?cs from the URL once
-   - Polls /api/confirm-checkout until:
-       • API says { pending: true } → keep polling (show “payment settling” banner)
-       • API responds 401 → fetch email, send magic link, show activation overlay
-       • API error / too many retries → show inline error
+   Hook: confirm checkout with polling (handles ?cs=... or ?session_id=..., sends OTP if not signed in)
 -------------------------------------------------------------------------------------------------- */
 function useConfirmCheckoutWithPolling() {
   const params = useSearchParams();
@@ -56,7 +51,6 @@ function useConfirmCheckoutWithPolling() {
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [pendingBanner, setPendingBanner] = useState(false);
 
   // Activation overlay state
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
@@ -68,9 +62,9 @@ function useConfirmCheckoutWithPolling() {
     () =>
       createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       ),
-    []
+    [],
   );
 
   // Track first render
@@ -82,15 +76,11 @@ function useConfirmCheckoutWithPolling() {
     }
   }, []);
 
-  // Cache the session id from the URL once
-  const sessionId = useMemo(() => {
-    const csParam = params.get("cs") || params.get("session_id");
-    return csParam || null;
-  }, [params]);
-
-  // Polling logic
   useEffect(() => {
-    if (!sessionId) return;
+    // Support either ?session_id= or ?cs=
+    const sessionId = params.get("session_id") || params.get("cs");
+    const pendingFlag = params.get("pending");
+    if (!sessionId || pendingFlag !== "1") return;
 
     let cancelled = false;
     let attempts = 0;
@@ -104,21 +94,35 @@ function useConfirmCheckoutWithPolling() {
 
       try {
         const res = await fetch(
-          `${API_BASE}/api/confirm-checkout?cs=${encodeURIComponent(sessionId as string)}`,
-          { credentials: "include" }
+          `${API_BASE}/api/confirm-checkout?cs=${encodeURIComponent(
+            sessionId,
+          )}`,
+          {
+            credentials: "include",
+          },
         );
 
-        // 401 → API says “membership is ready, but user must sign in”
+        // 401 = API says “membership is ready, but user must sign in”
         if (res.status === 401) {
           setPendingInfo("Finalising your membership…");
 
           // Look up the email used for this checkout session
           const s = await fetch(
-            `${API_BASE}/api/checkout/session?session_id=${encodeURIComponent(sessionId as string)}`
+            `${API_BASE}/api/checkout/session?session_id=${encodeURIComponent(
+              sessionId,
+            )}`,
           );
-          if (!s.ok) throw new Error("Could not retrieve checkout session details.");
+          if (!s.ok) {
+            throw new Error(
+              "Could not retrieve checkout session details.",
+            );
+          }
           const { email } = (await s.json()) as { email?: string };
-          if (!email) throw new Error("We couldn't determine your email for activation.");
+          if (!email) {
+            throw new Error(
+              "We couldn’t determine your email for activation.",
+            );
+          }
 
           setPendingEmail(email);
 
@@ -132,59 +136,60 @@ function useConfirmCheckoutWithPolling() {
           if (otpErr) throw otpErr;
 
           setPendingInfo(
-            "We’ve emailed you a secure sign-in link. Open it to activate your account."
+            "We’ve emailed you a secure sign-in link. Open it to activate your account.",
           );
           setCountdown(30);
-          setPendingBanner(false);
-          return; // stop polling – user will come back via magic link
+
+          // We’ve handed off to email, no more polling for this tab
+          return;
         }
 
-        const data = await res.json().catch(() => null);
+        const data = await res.json();
 
-        // Payment / membership still settling
-        if (data?.pending || params.get("pending") === "1") {
-          setPendingBanner(true);
+        if (data?.ok) {
+          track("welcome_view", { confirmed: true });
+          // Drop handled params and refresh data
+          router.replace("/welcome");
+          router.refresh?.();
+          return;
+        }
+
+        if (data?.pending) {
+          // Payment is still settling / webhook not finished
           track("welcome_view", { pending: true });
 
-          if (!cancelled && attempts < maxAttempts) {
-            setTimeout(poll, 3000); // poll again in 3s
-          } else if (attempts >= maxAttempts) {
-            setErr("This is taking longer than usual. Please refresh in a moment.");
+          if (attempts < maxAttempts && !cancelled) {
+            setTimeout(poll, 3000);
           }
           return;
         }
 
         if (data?.error) {
           setErr(data.error);
-          setPendingBanner(false);
-          return;
+        } else {
+          setErr("We couldn’t confirm your membership.");
         }
-
-        // Fallback: nothing explicit – stop polling
-        setPendingBanner(false);
       } catch (e: any) {
-        if (cancelled) return;
         setErr(e?.message || "Network error confirming checkout.");
-        setPendingBanner(false);
       } finally {
-        if (!cancelled) setBusy(false);
+        setBusy(false);
       }
     }
 
-    // Kick off first poll
+    // Start polling once
     poll();
 
     return () => {
       cancelled = true;
     };
-  }, [sessionId, params, supabase]);
+  }, [params, router, supabase]);
 
-  // Cooldown tick for resend
+  // Cooldown tick
   useEffect(() => {
     if (countdown <= 0) return;
     const t = setInterval(
       () => setCountdown((c) => (c > 0 ? c - 1 : 0)),
-      1000
+      1000,
     );
     return () => clearInterval(t);
   }, [countdown]);
@@ -197,7 +202,9 @@ function useConfirmCheckoutWithPolling() {
     try {
       const { error: otpErr } = await supabase.auth.signInWithOtp({
         email: pendingEmail,
-        options: { emailRedirectTo: new URL("/welcome", APP_URL).toString() },
+        options: {
+          emailRedirectTo: new URL("/welcome", APP_URL).toString(),
+        },
       });
       if (otpErr) throw otpErr;
     } catch {
@@ -222,7 +229,6 @@ function useConfirmCheckoutWithPolling() {
   return {
     busy,
     err,
-    pendingBanner,
     showActivationOverlay,
     pendingEmail,
     pendingInfo,
@@ -243,8 +249,14 @@ export default function WelcomePage() {
   const { data: profile } = useProfile(userId);
   const { data: member } = useMember(userId);
 
-  const tier: Tier = (member?.tier as Tier) ?? "access";
-  const showTrial = shouldShowTrial({ tier } as any);
+  // Local override so we can immediately reflect linked Pro/Member tier
+  const [linkedTierOverride, setLinkedTierOverride] = useState<Tier | null>(
+    null,
+  );
+
+  const effectiveTier: Tier =
+    linkedTierOverride ?? ((member?.tier as Tier) ?? "access");
+  const showTrial = shouldShowTrial({ tier: effectiveTier } as any);
 
   const params = useSearchParams();
   const router = useRouter();
@@ -253,16 +265,15 @@ export default function WelcomePage() {
     () =>
       createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       ),
-    []
+    [],
   );
 
-  // Confirm checkout / handle magic-link overlay
+  // Confirm checkout if `?cs=` or `?session_id=`
   const {
     busy,
     err,
-    pendingBanner,
     showActivationOverlay,
     pendingEmail,
     pendingInfo,
@@ -272,7 +283,46 @@ export default function WelcomePage() {
     canResend,
   } = useConfirmCheckoutWithPolling();
 
-  // Form state
+  // After sign-in: link Stripe subscription → Supabase user (if needed)
+  const linkAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (linkAttemptedRef.current) return;
+    if (!profile?.email) return;
+
+    // If we already know this user has a paid tier, nothing to do
+    if (member?.tier && member.tier !== "access") return;
+
+    linkAttemptedRef.current = true;
+
+    (async () => {
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/link-subscription-by-email`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: profile.email }),
+          },
+        );
+
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          linked?: boolean;
+          tier?: string;
+        };
+
+        if (data.linked && data.tier && data.tier !== "access") {
+          setLinkedTierOverride(data.tier as Tier);
+        }
+      } catch (e) {
+        console.warn("link-subscription-by-email failed", e);
+        // allow retry on next mount if needed
+        linkAttemptedRef.current = false;
+      }
+    })();
+  }, [profile?.email, member?.tier]);
+
+  // Form state (schema has no phone column)
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   const [savedOnce, setSavedOnce] = useState(false);
@@ -298,7 +348,7 @@ export default function WelcomePage() {
     (params.get("cycle") as "month" | "year" | null) || null;
   const showResume =
     params.get("continue") === "1" &&
-    tier === "access" &&
+    effectiveTier === "access" &&
     wantedPlan &&
     wantedCycle;
 
@@ -315,16 +365,14 @@ export default function WelcomePage() {
         throw new Error(data?.error || "Could not start checkout.");
       window.location.href = data.url;
     } catch {
-      /* no-op for now */
+      /* no-op */
     }
   }
 
   function goJoin(plan: "member" | "pro") {
     try {
       localStorage.setItem("join_wanted_plan", plan);
-    } catch {
-      // ignore
-    }
+    } catch {}
     track("welcome_cta_join_member", { plan, trial: showTrial });
     window.location.href = "/join";
   }
@@ -335,9 +383,7 @@ export default function WelcomePage() {
       await navigator.clipboard.writeText(userId);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   async function saveAndContinue() {
@@ -346,6 +392,7 @@ export default function WelcomePage() {
     setError("");
     setSaving(true);
     try {
+      // Only touch the columns that exist
       const { error: upErr } = await supabase
         .from("profiles")
         .upsert(
@@ -355,15 +402,16 @@ export default function WelcomePage() {
             name: name || null,
             updated_at: new Date().toISOString(),
           },
-          { onConflict: "user_id" }
+          { onConflict: "user_id" },
         );
 
       if (upErr) throw upErr;
 
       setSavedOnce(true);
-      track("welcome_profile_saved", { tier });
+      track("welcome_profile_saved", { tier: effectiveTier });
 
-      window.location.href = tier === "access" ? "/offers" : "/account";
+      window.location.href =
+        effectiveTier === "access" ? "/offers" : "/account";
     } catch (e: any) {
       setError(e?.message || "We couldn’t save your details just now.");
     } finally {
@@ -397,16 +445,10 @@ export default function WelcomePage() {
           }
         />
 
-        {/* Inline system messages */}
-        {(busy || err || showResume || pendingBanner) && (
+        {/* Inline status from confirm step */}
+        {(busy || err || showResume) && (
           <div className="mb-4 space-y-2">
-            {pendingBanner && !err && (
-              <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-amber-200 text-sm">
-                Payment is settling. This usually takes a moment — we’ll update
-                automatically.
-              </div>
-            )}
-            {busy && !pendingBanner && (
+            {busy && (
               <div className="rounded-lg border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-blue-200 text-sm">
                 Activating your membership…
               </div>
@@ -431,7 +473,7 @@ export default function WelcomePage() {
           </div>
         )}
 
-        {shouldShowTrial({ tier } as any) && (
+        {shouldShowTrial({ tier: effectiveTier } as any) && (
           <div className="mb-4 rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-200">
             Limited-time offer: {TRIAL_COPY}
           </div>
@@ -452,7 +494,7 @@ export default function WelcomePage() {
               <div className="mt-3 grid grid-cols-3 gap-2">
                 <div className="rounded-lg border border-neutral-800 p-3 text-center">
                   <div className="text-xl font-semibold">
-                    {TIER_COPY[tier].label}
+                    {TIER_COPY[effectiveTier].label}
                   </div>
                   <div className="mt-1 text-xs text-neutral-400">Tier</div>
                 </div>
@@ -461,7 +503,9 @@ export default function WelcomePage() {
                   <div className="text-xl font-semibold truncate">
                     {maskedId(userId ?? undefined)}
                   </div>
-                  <div className="mt-1 text-xs text-neutral-400">Card ID</div>
+                  <div className="mt-1 text-xs text-neutral-400">
+                    Card ID
+                  </div>
                 </div>
 
                 <div className="rounded-lg border border-neutral-800 p-3 text-center">
@@ -483,15 +527,17 @@ export default function WelcomePage() {
             <aside className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
               <div className="font-medium">What next?</div>
               <p className="mt-1 text-sm text-neutral-300">
-                {TIER_COPY[tier].blurb}
+                {TIER_COPY[effectiveTier].blurb}
               </p>
 
               <div className="mt-3 grid gap-2">
                 <Link href="/offers" className="block">
-                  <PrimaryButton className="w-full">Browse offers</PrimaryButton>
+                  <PrimaryButton className="w-full">
+                    Browse offers
+                  </PrimaryButton>
                 </Link>
 
-                {tier !== "access" ? (
+                {effectiveTier !== "access" ? (
                   <>
                     <Link href="/benefits" className="block">
                       <button className="w-full rounded-xl border border-neutral-700 bg-neutral-900 px-4 py-2 font-medium hover:bg-neutral-800">
@@ -529,7 +575,8 @@ export default function WelcomePage() {
         <section className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
           <div className="font-medium">Tell us how to reach you</div>
           <p className="mt-1 text-sm text-neutral-300">
-            We’ll use this for support and rewards notifications. We never spam.
+            We’ll use this for support and rewards notifications. We never
+            spam.
           </p>
 
           {error && (
@@ -565,15 +612,15 @@ export default function WelcomePage() {
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <PrimaryButton onClick={saveAndContinue} disabled={saving}>
-              {tier === "access"
+              {effectiveTier === "access"
                 ? "Save & continue to offers"
                 : "Save & go to my account"}
             </PrimaryButton>
-            {tier === "access" && (
+            {effectiveTier === "access" && (
               <button
                 type="button"
                 onClick={() => {
-                  track("welcome_skip", { tier });
+                  track("welcome_skip", { tier: effectiveTier });
                   router.push("/offers");
                 }}
                 className="rounded-xl border border-neutral-700 bg-neutral-900 px-4 py-2 text-sm font-medium hover:bg-neutral-800"
