@@ -1,3 +1,4 @@
+// tradescard-web/app/welcome/page.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -44,8 +45,9 @@ const API_BASE =
 
 /* -------------------------------------------------------------------------------------------------
    Hook: confirm checkout with polling (handles ?cs=... or ?session_id=..., sends OTP if not signed in)
+   - now takes `alreadyPaid` so we can skip everything once we *know* the account is active
 -------------------------------------------------------------------------------------------------- */
-function useConfirmCheckoutWithPolling() {
+function useConfirmCheckoutWithPolling(alreadyPaid: boolean) {
   const params = useSearchParams();
   const router = useRouter();
 
@@ -83,6 +85,13 @@ function useConfirmCheckoutWithPolling() {
     const sessionId = rawSessionId ?? "";
 
     if (!sessionId || pendingFlag !== "1") return;
+
+    // If we already know this user is on a paid tier, just clean up the URL
+    // and skip all the confirm / magic-link logic for this tab.
+    if (alreadyPaid) {
+      router.replace("/welcome");
+      return;
+    }
 
     let cancelled = false;
     let attempts = 0;
@@ -126,16 +135,24 @@ function useConfirmCheckoutWithPolling() {
             );
           }
 
-          setPendingEmail(email);
+          const normalisedEmail = email.trim().toLowerCase();
+          setPendingEmail(normalisedEmail);
 
-          // Send initial magic link and start cooldown
-          const { error: otpErr } = await supabase.auth.signInWithOtp({
-            email,
-            options: {
-              emailRedirectTo: new URL("/welcome", APP_URL).toString(),
-            },
-          });
-          if (otpErr) throw otpErr;
+          // Only send the *first* magic link automatically for this
+          // checkout session in this browser. Further refreshes of this
+          // tab won't keep re-sending.
+          const sendKey = `checkout_activation_sent_${sessionId}_${normalisedEmail}`;
+          if (!window.localStorage.getItem(sendKey)) {
+            const { error: otpErr } = await supabase.auth.signInWithOtp({
+              email: normalisedEmail,
+              options: {
+                emailRedirectTo: new URL("/welcome", APP_URL).toString(),
+              },
+            });
+            if (otpErr) throw otpErr;
+
+            window.localStorage.setItem(sendKey, "1");
+          }
 
           setPendingInfo(
             "We’ve emailed you a secure sign-in link. Open it to activate your account.",
@@ -184,7 +201,7 @@ function useConfirmCheckoutWithPolling() {
     return () => {
       cancelled = true;
     };
-  }, [params, router, supabase]);
+  }, [params, router, supabase, alreadyPaid]);
 
   // Cooldown tick
   useEffect(() => {
@@ -196,7 +213,7 @@ function useConfirmCheckoutWithPolling() {
     return () => clearInterval(t);
   }, [countdown]);
 
-  // Resend magic link
+  // Resend magic link (explicit user action – allowed even if we've sent one before)
   const resend = async () => {
     if (!pendingEmail || countdown > 0 || resending) return;
     setResending(true);
@@ -256,14 +273,10 @@ export default function WelcomePage() {
     null,
   );
 
-  // Prefer: linked tier → members.tier → profiles.tier → access
   const effectiveTier: Tier =
-    linkedTierOverride ??
-    ((member?.tier as Tier | undefined) ??
-      (profile?.tier as Tier | undefined) ??
-      "access");
-
+    linkedTierOverride ?? ((member?.tier as Tier) ?? "access");
   const showTrial = shouldShowTrial({ tier: effectiveTier } as any);
+  const isPaidTier = effectiveTier !== "access";
 
   const params = useSearchParams();
   const router = useRouter();
@@ -288,7 +301,7 @@ export default function WelcomePage() {
     resending,
     countdown,
     canResend,
-  } = useConfirmCheckoutWithPolling();
+  } = useConfirmCheckoutWithPolling(isPaidTier);
 
   // After sign-in: link Stripe subscription → Supabase user (if needed)
   const linkAttemptedRef = useRef(false);
