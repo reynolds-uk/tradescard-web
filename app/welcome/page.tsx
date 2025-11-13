@@ -35,22 +35,28 @@ const TIER_COPY: Record<Tier, { label: string; blurb: string }> = {
   },
 };
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
+const APP_URL =
+  process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ??
   process.env.NEXT_PUBLIC_API_BASE ??
   "https://tradescard-api.vercel.app";
 
 /* -------------------------------------------------------------------------------------------------
-   Hook: confirm checkout once (handles ?cs=... or ?session_id=..., sends OTP if user not signed in)
+   Hook: confirm checkout with polling
+   - Reads ?session_id or ?cs from the URL once
+   - Polls /api/confirm-checkout until:
+       • API says { pending: true } → keep polling (show “payment settling” banner)
+       • API responds 401 → fetch email, send magic link, show activation overlay
+       • API error / too many retries → show inline error
 -------------------------------------------------------------------------------------------------- */
-function useConfirmCheckoutOnce() {
+function useConfirmCheckoutWithPolling() {
   const params = useSearchParams();
   const router = useRouter();
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+  const [pendingBanner, setPendingBanner] = useState(false);
 
   // Activation overlay state
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
@@ -76,44 +82,56 @@ function useConfirmCheckoutOnce() {
     }
   }, []);
 
-  // Confirm once
-  const ran = useRef(false);
-  useEffect(() => {
-    const cs = params.get("cs") || params.get("session_id");
-    if (!cs || ran.current) return;
-    ran.current = true;
+  // Cache the session id from the URL once
+  const sessionId = useMemo(() => {
+    const csParam = params.get("cs") || params.get("session_id");
+    return csParam || null;
+  }, [params]);
 
-    (async () => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 10_000);
+  // Polling logic
+  useEffect(() => {
+    if (!sessionId) return;
+
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 20; // ~60s if we poll every 3s
+
+    async function poll() {
+      if (cancelled) return;
+      attempts += 1;
+      setBusy(true);
+      setErr(null);
 
       try {
-        setBusy(true);
-        setErr(null);
-        setPending(false);
-
         const res = await fetch(
-          `${API_BASE}/api/confirm-checkout?cs=${encodeURIComponent(cs)}`,
-          { credentials: "include", cache: "no-store", signal: controller.signal }
+          `${API_BASE}/api/confirm-checkout?cs=${encodeURIComponent(
+            sessionId
+          )}`,
+          { credentials: "include" }
         );
 
+        // 401 → API says “membership is ready, but user must sign in”
         if (res.status === 401) {
-          // Not signed in yet — fetch email from Stripe session and send the magic link
           setPendingInfo("Finalising your membership…");
+
+          // Look up the email used for this checkout session
           const s = await fetch(
-            `${API_BASE}/api/checkout/session?session_id=${encodeURIComponent(cs)}`,
-            { cache: "no-store" }
+            `${API_BASE}/api/checkout/session?session_id=${encodeURIComponent(
+              sessionId
+            )}`
           );
           if (!s.ok) throw new Error("Could not retrieve checkout session details.");
           const { email } = (await s.json()) as { email?: string };
-          if (!email) throw new Error("We couldn’t determine your email for activation.");
+          if (!email) throw new Error("We couldn't determine your email for activation.");
 
           setPendingEmail(email);
 
-          // Send initial magic link and start 30s cooldown
+          // Send initial magic link and start cooldown
           const { error: otpErr } = await supabase.auth.signInWithOtp({
             email,
-            options: { emailRedirectTo: new URL("/welcome", APP_URL).toString() },
+            options: {
+              emailRedirectTo: new URL("/welcome", APP_URL).toString(),
+            },
           });
           if (otpErr) throw otpErr;
 
@@ -121,49 +139,57 @@ function useConfirmCheckoutOnce() {
             "We’ve emailed you a secure sign-in link. Open it to activate your account."
           );
           setCountdown(30);
-          return;
+          setPendingBanner(false);
+          return; // stop polling – user will come back via magic link
         }
 
-        const data = await res.json().catch(() => ({}));
+        const data = await res.json().catch(() => null);
 
-        if (data?.ok || data?.need_sign_in) {
-          // Success path (or webhook has written) — drop params & refresh
-          track("welcome_view", { confirmed: true });
-          router.replace("/welcome"); // removes ?cs= from the URL
-          router.refresh?.();
-          return;
-        }
-
+        // Payment / membership still settling
         if (data?.pending || params.get("pending") === "1") {
-          setPending(true);
+          setPendingBanner(true);
           track("welcome_view", { pending: true });
+
+          if (!cancelled && attempts < maxAttempts) {
+            setTimeout(poll, 3000); // poll again in 3s
+          } else if (attempts >= maxAttempts) {
+            setErr("This is taking longer than usual. Please refresh in a moment.");
+          }
           return;
         }
 
         if (data?.error) {
           setErr(data.error);
-        } else if (!res.ok) {
-          setErr(`We couldn’t confirm your membership (HTTP ${res.status}).`);
+          setPendingBanner(false);
+          return;
         }
-      } catch (e: any) {
-        // AbortError → show gentle pending instead of a scary error
-        if (e?.name === "AbortError") {
-          setPending(true);
-        } else {
-          setErr(e?.message || "Network error confirming checkout.");
-        }
-      } finally {
-        clearTimeout(timer);
-        setBusy(false);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params, router, supabase]);
 
-  // Cooldown tick
+        // Fallback: nothing explicit – stop polling
+        setPendingBanner(false);
+      } catch (e: any) {
+        if (cancelled) return;
+        setErr(e?.message || "Network error confirming checkout.");
+        setPendingBanner(false);
+      } finally {
+        if (!cancelled) setBusy(false);
+      }
+    }
+
+    // Kick off first poll
+    poll();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, params, supabase]);
+
+  // Cooldown tick for resend
   useEffect(() => {
     if (countdown <= 0) return;
-    const t = setInterval(() => setCountdown((c) => (c > 0 ? c - 1 : 0)), 1000);
+    const t = setInterval(
+      () => setCountdown((c) => (c > 0 ? c - 1 : 0)),
+      1000
+    );
     return () => clearInterval(t);
   }, [countdown]);
 
@@ -199,8 +225,8 @@ function useConfirmCheckoutOnce() {
 
   return {
     busy,
-    pending,
     err,
+    pendingBanner,
     showActivationOverlay,
     pendingEmail,
     pendingInfo,
@@ -236,11 +262,11 @@ export default function WelcomePage() {
     []
   );
 
-  // Confirm checkout if `?cs=` or `?session_id=`
+  // Confirm checkout / handle magic-link overlay
   const {
     busy,
-    pending,
     err,
+    pendingBanner,
     showActivationOverlay,
     pendingEmail,
     pendingInfo,
@@ -248,9 +274,9 @@ export default function WelcomePage() {
     resending,
     countdown,
     canResend,
-  } = useConfirmCheckoutOnce();
+  } = useConfirmCheckoutWithPolling();
 
-  // Form state (schema has no phone column)
+  // Form state
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   const [savedOnce, setSavedOnce] = useState(false);
@@ -266,13 +292,19 @@ export default function WelcomePage() {
     setName(profile.name ?? "");
   }, [profile]);
 
-  const maskedId = (id?: string) => (id ? `${id.slice(0, 6)}…${id.slice(-4)}` : "—");
+  const maskedId = (id?: string) =>
+    id ? `${id.slice(0, 6)}…${id.slice(-4)}` : "—";
 
   // “Resume checkout” if they came back with continue=1 and still on Access
-  const wantedPlan = (params.get("plan") as "member" | "pro" | null) || null;
-  const wantedCycle = (params.get("cycle") as "month" | "year" | null) || null;
+  const wantedPlan =
+    (params.get("plan") as "member" | "pro" | null) || null;
+  const wantedCycle =
+    (params.get("cycle") as "month" | "year" | null) || null;
   const showResume =
-    params.get("continue") === "1" && tier === "access" && wantedPlan && wantedCycle;
+    params.get("continue") === "1" &&
+    tier === "access" &&
+    wantedPlan &&
+    wantedCycle;
 
   async function resumeCheckout() {
     try {
@@ -283,17 +315,20 @@ export default function WelcomePage() {
         body: JSON.stringify({ plan: wantedPlan, cycle: wantedCycle }),
       });
       const data = await res.json();
-      if (!res.ok || !data?.url) throw new Error(data?.error || "Could not start checkout.");
+      if (!res.ok || !data?.url)
+        throw new Error(data?.error || "Could not start checkout.");
       window.location.href = data.url;
     } catch {
-      /* no-op */
+      /* no-op for now */
     }
   }
 
   function goJoin(plan: "member" | "pro") {
     try {
       localStorage.setItem("join_wanted_plan", plan);
-    } catch {}
+    } catch {
+      // ignore
+    }
     track("welcome_cta_join_member", { plan, trial: showTrial });
     window.location.href = "/join";
   }
@@ -304,7 +339,9 @@ export default function WelcomePage() {
       await navigator.clipboard.writeText(userId);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {}
+    } catch {
+      // ignore
+    }
   }
 
   async function saveAndContinue() {
@@ -313,7 +350,6 @@ export default function WelcomePage() {
     setError("");
     setSaving(true);
     try {
-      // Only touch the columns that exist
       const { error: upErr } = await supabase
         .from("profiles")
         .upsert(
@@ -365,17 +401,18 @@ export default function WelcomePage() {
           }
         />
 
-        {/* Inline status from confirm step */}
-        {(busy || err || pending || showResume) && (
+        {/* Inline system messages */}
+        {(busy || err || showResume || pendingBanner) && (
           <div className="mb-4 space-y-2">
-            {busy && (
-              <div className="rounded-lg border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-blue-200 text-sm">
-                Activating your membership…
+            {pendingBanner && !err && (
+              <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-amber-200 text-sm">
+                Payment is settling. This usually takes a moment — we’ll update
+                automatically.
               </div>
             )}
-            {pending && !busy && !err && (
-              <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-amber-200 text-sm">
-                Payment is settling. This usually takes a moment — we’ll update automatically.
+            {busy && !pendingBanner && (
+              <div className="rounded-lg border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-blue-200 text-sm">
+                Activating your membership…
               </div>
             )}
             {err && (
@@ -398,7 +435,7 @@ export default function WelcomePage() {
           </div>
         )}
 
-        {showTrial && (
+        {shouldShowTrial({ tier } as any) && (
           <div className="mb-4 rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-200">
             Limited-time offer: {TRIAL_COPY}
           </div>
@@ -412,11 +449,15 @@ export default function WelcomePage() {
             {/* Card & details */}
             <div className="md:col-span-2">
               <div className="text-2xl font-semibold">TradeCard</div>
-              <div className="mt-1 text-sm text-neutral-300">{profile?.email ?? "—"}</div>
+              <div className="mt-1 text-sm text-neutral-300">
+                {profile?.email ?? "—"}
+              </div>
 
               <div className="mt-3 grid grid-cols-3 gap-2">
                 <div className="rounded-lg border border-neutral-800 p-3 text-center">
-                  <div className="text-xl font-semibold">{TIER_COPY[tier].label}</div>
+                  <div className="text-xl font-semibold">
+                    {TIER_COPY[tier].label}
+                  </div>
                   <div className="mt-1 text-xs text-neutral-400">Tier</div>
                 </div>
 
@@ -435,7 +476,9 @@ export default function WelcomePage() {
                   >
                     {copied ? "Copied ✓" : "Copy ID"}
                   </button>
-                  <div className="mt-1 text-xs text-neutral-400">For support & verification</div>
+                  <div className="mt-1 text-xs text-neutral-400">
+                    For support & verification
+                  </div>
                 </div>
               </div>
             </div>
@@ -443,7 +486,9 @@ export default function WelcomePage() {
             {/* Next steps quick links */}
             <aside className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
               <div className="font-medium">What next?</div>
-              <p className="mt-1 text-sm text-neutral-300">{TIER_COPY[tier].blurb}</p>
+              <p className="mt-1 text-sm text-neutral-300">
+                {TIER_COPY[tier].blurb}
+              </p>
 
               <div className="mt-3 grid gap-2">
                 <Link href="/offers" className="block">
@@ -465,7 +510,10 @@ export default function WelcomePage() {
                   </>
                 ) : (
                   <>
-                    <PrimaryButton onClick={() => goJoin("member")} className="w-full">
+                    <PrimaryButton
+                      onClick={() => goJoin("member")}
+                      className="w-full"
+                    >
                       {accessCta}
                     </PrimaryButton>
                     <button
@@ -501,7 +549,10 @@ export default function WelcomePage() {
 
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <label htmlFor="name" className="block text-xs text-neutral-400 mb-1">
+              <label
+                htmlFor="name"
+                className="block text-xs text-neutral-400 mb-1"
+              >
                 Your name <span className="text-neutral-500">(optional)</span>
               </label>
               <input
@@ -518,7 +569,9 @@ export default function WelcomePage() {
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <PrimaryButton onClick={saveAndContinue} disabled={saving}>
-              {tier === "access" ? "Save & continue to offers" : "Save & go to my account"}
+              {tier === "access"
+                ? "Save & continue to offers"
+                : "Save & go to my account"}
             </PrimaryButton>
             {tier === "access" && (
               <button
