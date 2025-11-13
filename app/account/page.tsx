@@ -1,7 +1,7 @@
 // app/account/page.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 import Container from "@/components/Container";
@@ -57,7 +57,10 @@ function Badge({
     bad: "bg-red-900/30 text-red-300",
     muted: "bg-neutral-800 text-neutral-300",
   } as const;
-  return <span className={`rounded px-2 py-0.5 text-xs ${map[tone]}`}>{children}</span>;
+
+  return (
+    <span className={`rounded px-2 py-0.5 text-xs ${map[tone]}`}>{children}</span>
+  );
 }
 
 const statusBadge = (s?: string) => {
@@ -95,14 +98,14 @@ export default function AccountPage() {
     () =>
       createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       ),
-    []
+    [],
   );
 
   // Local state
   const [ready, setReady] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loadingRewards, setLoadingRewards] = useState(true);
 
   const [name, setName] = useState(profile?.name ?? "");
   const [savingName, setSavingName] = useState(false);
@@ -110,7 +113,6 @@ export default function AccountPage() {
   const [error, setError] = useState<string>("");
 
   const [rewards, setRewards] = useState<RewardsSummary | null>(null);
-  const actionsRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => setReady(true), []);
   useEffect(() => setName(profile?.name ?? ""), [profile?.name]);
@@ -119,15 +121,17 @@ export default function AccountPage() {
   useEffect(() => {
     if (!isSignedIn || !userId) {
       setRewards(null);
-      setLoading(false);
+      setLoadingRewards(false);
       return;
     }
 
     (async () => {
       try {
-        setLoading(true);
+        setLoadingRewards(true);
         const rw = await fetch(
-          `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(userId)}`
+          `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(
+            userId,
+          )}`,
         );
         if (rw.ok) {
           const j = (await rw.json()) as RewardsSummary;
@@ -141,7 +145,7 @@ export default function AccountPage() {
       } catch {
         setRewards(null);
       } finally {
-        setLoading(false);
+        setLoadingRewards(false);
       }
     })();
   }, [isSignedIn, userId]);
@@ -157,13 +161,25 @@ export default function AccountPage() {
       const res = await fetch(`${API_BASE}/api/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan, cycle: "month", email: profile?.email }),
+        body: JSON.stringify({
+          plan,
+          cycle: "month",
+          email: profile?.email,
+        }),
       });
       const j = await res.json().catch(() => ({} as any));
       if (!res.ok || !j?.url) throw new Error(j?.error || "Checkout failed");
       window.location.href = j.url;
     } catch (e: any) {
       setError(e?.message || "Could not start checkout");
+    }
+  };
+
+  const openBillingPortal = () => {
+    // Click the real billing button in the Billing section
+    const btn = document.getElementById("billing-portal-btn");
+    if (btn instanceof HTMLButtonElement) {
+      btn.click();
     }
   };
 
@@ -181,7 +197,7 @@ export default function AccountPage() {
             name: name || null,
             updated_at: new Date().toISOString(),
           },
-          { onConflict: "user_id" }
+          { onConflict: "user_id" },
         );
       if (upErr) throw upErr;
       setNameSaved(true);
@@ -217,12 +233,18 @@ export default function AccountPage() {
     : canDowngrade
     ? "Manage billing"
     : "";
+
   const stickyAction = () => {
     if (canJoin) return startMembership("member");
     if (canUpgrade) return startMembership("pro");
-    if (canDowngrade) document.getElementById("manage-billing-btn")?.click();
+    if (canDowngrade) return openBillingPortal();
   };
-  const showSticky = ready && !loading && isSignedIn && (canJoin || canUpgrade || canDowngrade);
+
+  const showSticky =
+    ready &&
+    isSignedIn &&
+    (canJoin || canUpgrade || canDowngrade) &&
+    !loadingRewards;
 
   return (
     <>
@@ -253,13 +275,11 @@ export default function AccountPage() {
           subtitle="Manage your membership, billing, details and rewards."
           aside={
             ready ? (
-              <div className="text-sm text-neutral-400">
-                {isSignedIn ? (
-                  <span className="hidden sm:inline">Signed in as</span>
-                ) : (
-                  <span className="hidden sm:inline">Not signed in</span>
-                )}{" "}
-                <span className="font-mono text-neutral-300">
+              <div className="flex max-w-xs items-center justify-end gap-1 text-sm text-neutral-400 sm:max-w-md">
+                <span className="hidden sm:inline">
+                  {isSignedIn ? "Signed in as" : "Not signed in"}
+                </span>
+                <span className="font-mono text-xs sm:text-sm truncate max-w-[9rem] sm:max-w-[14rem]">
                   {profile?.email ?? "—"}
                 </span>
               </div>
@@ -276,14 +296,14 @@ export default function AccountPage() {
         {/* Logged-out simple prompt */}
         {!isSignedIn && (
           <div className="rounded-xl border border-neutral-800 p-5 bg-neutral-900/60">
-            <p className="font-medium mb-2">You’re not signed in.</p>
-            <p className="text-neutral-400 mb-3">
+            <p className="mb-2 font-medium">You’re not signed in.</p>
+            <p className="mb-3 text-neutral-400">
               Use your email to get a magic link. No password needed.
             </p>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => routeToJoin()}
-                className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
+                className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 hover:bg-neutral-800"
               >
                 Join free
               </button>
@@ -298,9 +318,9 @@ export default function AccountPage() {
         {isSignedIn && (
           <div className="grid gap-6 md:grid-cols-3">
             {/* Left column */}
-            <section className="md:col-span-2 space-y-6">
+            <section className="space-y-6 md:col-span-2">
               {/* Membership summary */}
-              <div className="rounded-2xl border border-neutral-800 p-5 bg-gradient-to-br from-neutral-900 to-neutral-950">
+              <div className="rounded-2xl border border-neutral-800 bg-gradient-to-br from-neutral-900 to-neutral-950 p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-sm text-neutral-400">Membership</div>
@@ -309,7 +329,9 @@ export default function AccountPage() {
                       <Badge tone="muted">{TIER_META[tier].label}</Badge>
                       {statusBadge(status)}
                     </div>
-                    <p className="mt-2 text-sm text-neutral-300">{TIER_META[tier].tagline}</p>
+                    <p className="mt-2 text-sm text-neutral-300">
+                      {TIER_META[tier].tagline}
+                    </p>
                   </div>
                   <div className="rounded-lg border border-dashed border-neutral-700 px-3 py-2 text-xs text-neutral-400">
                     Wallet pass coming soon
@@ -318,16 +340,28 @@ export default function AccountPage() {
 
                 <div className="mt-4 grid gap-2 sm:grid-cols-3">
                   <div className="rounded-lg border border-neutral-800 p-3 text-center">
-                    <div className="text-2xl font-semibold">{TIER_META[tier].boost}</div>
-                    <div className="text-xs text-neutral-400 mt-1">Tier boost</div>
+                    <div className="text-2xl font-semibold">
+                      {TIER_META[tier].boost}
+                    </div>
+                    <div className="mt-1 text-xs text-neutral-400">
+                      Tier boost
+                    </div>
                   </div>
                   <div className="rounded-lg border border-neutral-800 p-3 text-center">
-                    <div className="text-2xl font-semibold">{TIER_META[tier].priceShort}</div>
-                    <div className="text-xs text-neutral-400 mt-1">per month</div>
+                    <div className="text-2xl font-semibold">
+                      {TIER_META[tier].priceShort}
+                    </div>
+                    <div className="mt-1 text-xs text-neutral-400">
+                      per month
+                    </div>
                   </div>
                   <div className="rounded-lg border border-neutral-800 p-3 text-center">
-                    <div className="text-2xl font-semibold">{prettyDate(renewal)}</div>
-                    <div className="text-xs text-neutral-400 mt-1">Renews</div>
+                    <div className="text-2xl font-semibold">
+                      {prettyDate(renewal)}
+                    </div>
+                    <div className="mt-1 text-xs text-neutral-400">
+                      Renews
+                    </div>
                   </div>
                 </div>
               </div>
@@ -342,15 +376,19 @@ export default function AccountPage() {
                 </div>
                 <div className="mt-3 grid gap-3 sm:grid-cols-3">
                   <div className="rounded-lg border border-neutral-800 p-3">
-                    <div className="text-sm text-neutral-400">Points this month</div>
+                    <div className="text-sm text-neutral-400">
+                      Points this month
+                    </div>
                     <div className="mt-1 text-2xl font-semibold">
-                      {loading ? "…" : rewards?.points_this_month ?? "—"}
+                      {loadingRewards ? "…" : rewards?.points_this_month ?? "—"}
                     </div>
                   </div>
                   <div className="rounded-lg border border-neutral-800 p-3">
-                    <div className="text-sm text-neutral-400">Lifetime points</div>
+                    <div className="text-sm text-neutral-400">
+                      Lifetime points
+                    </div>
                     <div className="mt-1 text-2xl font-semibold">
-                      {loading ? "…" : rewards?.lifetime_points ?? "—"}
+                      {loadingRewards ? "…" : rewards?.lifetime_points ?? "—"}
                     </div>
                   </div>
                   <div className="rounded-lg border border-neutral-800 p-3">
@@ -359,23 +397,26 @@ export default function AccountPage() {
                   </div>
                 </div>
                 <p className="mt-3 text-sm text-neutral-400">
-                  Cancelling or downgrading stops new entries immediately. Lifetime points remain
-                  on your profile but do not qualify you for draws while inactive.
+                  Cancelling or downgrading stops new entries immediately.
+                  Lifetime points remain on your profile but do not qualify you
+                  for draws while inactive.
                 </p>
               </div>
 
               {/* Plan actions */}
-              <div ref={actionsRef} className="rounded-xl border border-neutral-800 p-5">
-                <div className="font-medium mb-3">Plan actions</div>
+              <div className="rounded-xl border border-neutral-800 p-5">
+                <div className="mb-3 font-medium">Plan actions</div>
 
                 {canJoin && (
                   <div className="flex flex-wrap gap-2">
                     <PrimaryButton onClick={() => startMembership("member")}>
-                      {showTrial ? TRIAL_COPY : "Join as Member (£2.99/mo)"}
+                      {showTrial
+                        ? TRIAL_COPY
+                        : "Join as Member (£2.99/mo)"}
                     </PrimaryButton>
                     <button
                       onClick={() => startMembership("pro")}
-                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
+                      className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 hover:bg-neutral-800"
                     >
                       Go Pro (£7.99/mo)
                     </button>
@@ -388,9 +429,8 @@ export default function AccountPage() {
                       Upgrade to Pro
                     </PrimaryButton>
                     <button
-                      id="manage-billing-btn"
-                      onClick={() => document.getElementById("billing-portal-click")?.click()}
-                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
+                      onClick={openBillingPortal}
+                      className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 hover:bg-neutral-800"
                     >
                       Manage billing / Cancel
                     </button>
@@ -401,14 +441,13 @@ export default function AccountPage() {
                   <div className="flex flex-wrap gap-2">
                     <button
                       onClick={() => startMembership("member")}
-                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
+                      className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 hover:bg-neutral-800"
                     >
                       Switch to Member
                     </button>
                     <button
-                      id="manage-billing-btn"
-                      onClick={() => document.getElementById("billing-portal-click")?.click()}
-                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
+                      onClick={openBillingPortal}
+                      className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 hover:bg-neutral-800"
                     >
                       Manage billing / Cancel
                     </button>
@@ -418,9 +457,8 @@ export default function AccountPage() {
                 {!canJoin && !canUpgrade && !canDowngrade && (
                   <div className="flex flex-wrap gap-2">
                     <button
-                      id="manage-billing-btn"
-                      onClick={() => document.getElementById("billing-portal-click")?.click()}
-                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
+                      onClick={openBillingPortal}
+                      className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 hover:bg-neutral-800"
                     >
                       Manage billing / Cancel
                     </button>
@@ -428,7 +466,8 @@ export default function AccountPage() {
                 )}
 
                 <p className="mt-3 text-xs text-neutral-500">
-                  You can cancel any time. Cancelling stops reward entries immediately.
+                  You can cancel any time. Cancelling stops reward entries
+                  immediately.
                 </p>
               </div>
             </section>
@@ -437,10 +476,13 @@ export default function AccountPage() {
             <aside className="space-y-6">
               {/* Your details */}
               <div className="rounded-xl border border-neutral-800 p-5">
-                <div className="font-medium mb-3">Your details</div>
+                <div className="mb-3 font-medium">Your details</div>
                 <div className="grid gap-3">
                   <div>
-                    <label htmlFor="name" className="block text-xs text-neutral-400 mb-1">
+                    <label
+                      htmlFor="name"
+                      className="mb-1 block text-xs text-neutral-400"
+                    >
                       Name <span className="text-neutral-500">(optional)</span>
                     </label>
                     <input
@@ -456,22 +498,32 @@ export default function AccountPage() {
                         {savingName ? "Saving…" : "Save"}
                       </PrimaryButton>
                       {nameSaved && (
-                        <span className="text-xs text-green-300 self-center">Saved ✓</span>
+                        <span className="self-center text-xs text-green-300">
+                          Saved ✓
+                        </span>
                       )}
                     </div>
                   </div>
 
                   <div className="text-sm text-neutral-300">
                     <div className="opacity-60">Email</div>
-                    <div className="font-mono">{profile?.email ?? "—"}</div>
+                    <div className="mt-0.5 max-w-full overflow-hidden text-ellipsis break-all rounded bg-neutral-950 px-2 py-1 font-mono text-xs sm:text-sm">
+                      {profile?.email ?? "—"}
+                    </div>
                   </div>
+
                   <div className="text-sm text-neutral-300">
                     <div className="opacity-60">Member ID</div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono truncate">{userId}</span>
+                    <div className="mt-0.5 flex items-center gap-2">
+                      <span className="max-w-[12rem] overflow-hidden text-ellipsis break-all rounded bg-neutral-950 px-2 py-1 font-mono text-xs sm:text-sm">
+                        {userId ?? "—"}
+                      </span>
                       <button
                         className="rounded bg-neutral-800 px-2 py-0.5 text-xs hover:bg-neutral-700"
-                        onClick={() => userId && navigator.clipboard.writeText(userId)}
+                        onClick={() =>
+                          userId && navigator.clipboard.writeText(userId)
+                        }
+                        disabled={!userId}
                       >
                         Copy
                       </button>
@@ -482,16 +534,16 @@ export default function AccountPage() {
 
               {/* Billing */}
               <div className="rounded-xl border border-neutral-800 p-5">
-                <div className="font-medium mb-1">Billing</div>
+                <div className="mb-1 font-medium">Billing</div>
                 <p className="text-sm text-neutral-400">
                   Manage your plan, update card, view invoices or cancel.
                 </p>
                 <div className="mt-3">
-                  {/* Hidden helper for programmatic click from left column */}
-                  <div className="hidden">
-                    <button id="billing-portal-click" onClick={() => { /* placeholder */ }} />
-                  </div>
-                  <ManageBillingButton className="mt-1" />
+                  {/* Give the billing button an id so other buttons can trigger it */}
+                  <ManageBillingButton
+                    id="billing-portal-btn"
+                    className="mt-1"
+                  />
                 </div>
                 <div className="mt-3 text-xs text-neutral-500">
                   Next renewal: {prettyDate(renewal)}
@@ -500,10 +552,10 @@ export default function AccountPage() {
 
               {/* Sign out */}
               <div className="rounded-xl border border-neutral-800 p-5">
-                <div className="font-medium mb-2">Security</div>
+                <div className="mb-2 font-medium">Security</div>
                 <button
                   onClick={signOut}
-                  className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
+                  className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 hover:bg-neutral-800"
                 >
                   Sign out
                 </button>
