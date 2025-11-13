@@ -1,7 +1,7 @@
 // app/account/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 import Container from "@/components/Container";
@@ -57,9 +57,10 @@ function Badge({
     bad: "bg-red-900/30 text-red-300",
     muted: "bg-neutral-800 text-neutral-300",
   } as const;
-
   return (
-    <span className={`rounded px-2 py-0.5 text-xs ${map[tone]}`}>{children}</span>
+    <span className={`rounded px-2 py-0.5 text-xs ${map[tone]}`}>
+      {children}
+    </span>
   );
 }
 
@@ -105,7 +106,7 @@ export default function AccountPage() {
 
   // Local state
   const [ready, setReady] = useState(false);
-  const [loadingRewards, setLoadingRewards] = useState(true);
+  const [loading, setLoading] = useState(true);
 
   const [name, setName] = useState(profile?.name ?? "");
   const [savingName, setSavingName] = useState(false);
@@ -113,6 +114,7 @@ export default function AccountPage() {
   const [error, setError] = useState<string>("");
 
   const [rewards, setRewards] = useState<RewardsSummary | null>(null);
+  const actionsRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => setReady(true), []);
   useEffect(() => setName(profile?.name ?? ""), [profile?.name]);
@@ -121,13 +123,13 @@ export default function AccountPage() {
   useEffect(() => {
     if (!isSignedIn || !userId) {
       setRewards(null);
-      setLoadingRewards(false);
+      setLoading(false);
       return;
     }
 
     (async () => {
       try {
-        setLoadingRewards(true);
+        setLoading(true);
         const rw = await fetch(
           `${API_BASE}/api/rewards/summary?user_id=${encodeURIComponent(
             userId,
@@ -145,7 +147,7 @@ export default function AccountPage() {
       } catch {
         setRewards(null);
       } finally {
-        setLoadingRewards(false);
+        setLoading(false);
       }
     })();
   }, [isSignedIn, userId]);
@@ -161,25 +163,15 @@ export default function AccountPage() {
       const res = await fetch(`${API_BASE}/api/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          plan,
-          cycle: "month",
-          email: profile?.email,
-        }),
+        body: JSON.stringify({ plan, cycle: "month", email: profile?.email }),
       });
       const j = await res.json().catch(() => ({} as any));
-      if (!res.ok || !j?.url) throw new Error(j?.error || "Checkout failed");
+      if (!res.ok || !j?.url) {
+        throw new Error(j?.error || "Checkout failed");
+      }
       window.location.href = j.url;
     } catch (e: any) {
       setError(e?.message || "Could not start checkout");
-    }
-  };
-
-  const openBillingPortal = () => {
-    // Click the real billing button in the Billing section
-    const btn = document.getElementById("billing-portal-btn");
-    if (btn instanceof HTMLButtonElement) {
-      btn.click();
     }
   };
 
@@ -218,7 +210,8 @@ export default function AccountPage() {
   };
 
   // Capability flags
-  const canJoin = tier === "access" || status === "canceled" || status === "free";
+  const canJoin =
+    tier === "access" || status === "canceled" || status === "free";
   const canUpgrade = tier === "member" && status !== "canceled";
   const canDowngrade = tier === "pro" && status !== "canceled";
   const isActive = status === "active" || status === "trialing";
@@ -233,18 +226,17 @@ export default function AccountPage() {
     : canDowngrade
     ? "Manage billing"
     : "";
-
   const stickyAction = () => {
     if (canJoin) return startMembership("member");
     if (canUpgrade) return startMembership("pro");
-    if (canDowngrade) return openBillingPortal();
+    if (canDowngrade)
+      document.getElementById("billing-portal-click")?.click();
   };
-
   const showSticky =
     ready &&
+    !loading &&
     isSignedIn &&
-    (canJoin || canUpgrade || canDowngrade) &&
-    !loadingRewards;
+    (canJoin || canUpgrade || canDowngrade);
 
   return (
     <>
@@ -257,13 +249,18 @@ export default function AccountPage() {
         >
           <div className="safe-inset-bottom" />
           <div className="mx-auto max-w-5xl px-4 py-3">
-            <PrimaryButton onClick={stickyAction} className="w-full text-base py-3">
+            <PrimaryButton
+              onClick={stickyAction}
+              className="w-full text-base py-3"
+            >
               {stickyLabel}
             </PrimaryButton>
             <div className="mt-2 text-center text-[11px] text-neutral-400">
               {canJoin && "Billed monthly • Cancel any time"}
-              {canUpgrade && "Pro unlocks bigger boosts & Pro-only offers"}
-              {canDowngrade && "Manage plan, payment method or cancel"}
+              {canUpgrade &&
+                "Pro unlocks bigger boosts & Pro-only offers"}
+              {canDowngrade &&
+                "Manage plan, payment method or cancel"}
             </div>
           </div>
         </div>
@@ -275,11 +272,13 @@ export default function AccountPage() {
           subtitle="Manage your membership, billing, details and rewards."
           aside={
             ready ? (
-              <div className="flex max-w-xs items-center justify-end gap-1 text-sm text-neutral-400 sm:max-w-md">
-                <span className="hidden sm:inline">
-                  {isSignedIn ? "Signed in as" : "Not signed in"}
-                </span>
-                <span className="font-mono text-xs sm:text-sm truncate max-w-[9rem] sm:max-w-[14rem]">
+              <div className="text-sm text-neutral-400">
+                {isSignedIn ? (
+                  <span className="hidden sm:inline">Signed in as</span>
+                ) : (
+                  <span className="hidden sm:inline">Not signed in</span>
+                )}{" "}
+                <span className="font-mono text-neutral-300 truncate inline-block max-w-xs align-bottom">
                   {profile?.email ?? "—"}
                 </span>
               </div>
@@ -296,14 +295,14 @@ export default function AccountPage() {
         {/* Logged-out simple prompt */}
         {!isSignedIn && (
           <div className="rounded-xl border border-neutral-800 p-5 bg-neutral-900/60">
-            <p className="mb-2 font-medium">You’re not signed in.</p>
-            <p className="mb-3 text-neutral-400">
+            <p className="font-medium mb-2">You’re not signed in.</p>
+            <p className="text-neutral-400 mb-3">
               Use your email to get a magic link. No password needed.
             </p>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex gap-2">
               <button
                 onClick={() => routeToJoin()}
-                className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 hover:bg-neutral-800"
+                className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
               >
                 Join free
               </button>
@@ -318,15 +317,21 @@ export default function AccountPage() {
         {isSignedIn && (
           <div className="grid gap-6 md:grid-cols-3">
             {/* Left column */}
-            <section className="space-y-6 md:col-span-2">
+            <section className="md:col-span-2 space-y-6">
               {/* Membership summary */}
-              <div className="rounded-2xl border border-neutral-800 bg-gradient-to-br from-neutral-900 to-neutral-950 p-5">
+              <div className="rounded-2xl border border-neutral-800 p-5 bg-gradient-to-br from-neutral-900 to-neutral-950">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="text-sm text-neutral-400">Membership</div>
+                    <div className="text-sm text-neutral-400">
+                      Membership
+                    </div>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
-                      <div className="text-2xl font-semibold">TradeCard</div>
-                      <Badge tone="muted">{TIER_META[tier].label}</Badge>
+                      <div className="text-2xl font-semibold">
+                        TradeCard
+                      </div>
+                      <Badge tone="muted">
+                        {TIER_META[tier].label}
+                      </Badge>
                       {statusBadge(status)}
                     </div>
                     <p className="mt-2 text-sm text-neutral-300">
@@ -343,7 +348,7 @@ export default function AccountPage() {
                     <div className="text-2xl font-semibold">
                       {TIER_META[tier].boost}
                     </div>
-                    <div className="mt-1 text-xs text-neutral-400">
+                    <div className="text-xs text-neutral-400 mt-1">
                       Tier boost
                     </div>
                   </div>
@@ -351,7 +356,7 @@ export default function AccountPage() {
                     <div className="text-2xl font-semibold">
                       {TIER_META[tier].priceShort}
                     </div>
-                    <div className="mt-1 text-xs text-neutral-400">
+                    <div className="text-xs text-neutral-400 mt-1">
                       per month
                     </div>
                   </div>
@@ -359,7 +364,7 @@ export default function AccountPage() {
                     <div className="text-2xl font-semibold">
                       {prettyDate(renewal)}
                     </div>
-                    <div className="mt-1 text-xs text-neutral-400">
+                    <div className="text-xs text-neutral-400 mt-1">
                       Renews
                     </div>
                   </div>
@@ -371,7 +376,9 @@ export default function AccountPage() {
                 <div className="flex items-center justify-between">
                   <div className="font-medium">Rewards</div>
                   <div className="text-xs text-neutral-400">
-                    {isActive ? "Eligible while active" : "Not eligible"}
+                    {isActive
+                      ? "Eligible while active"
+                      : "Not eligible"}
                   </div>
                 </div>
                 <div className="mt-3 grid gap-3 sm:grid-cols-3">
@@ -380,7 +387,9 @@ export default function AccountPage() {
                       Points this month
                     </div>
                     <div className="mt-1 text-2xl font-semibold">
-                      {loadingRewards ? "…" : rewards?.points_this_month ?? "—"}
+                      {loading
+                        ? "…"
+                        : rewards?.points_this_month ?? "—"}
                     </div>
                   </div>
                   <div className="rounded-lg border border-neutral-800 p-3">
@@ -388,35 +397,44 @@ export default function AccountPage() {
                       Lifetime points
                     </div>
                     <div className="mt-1 text-2xl font-semibold">
-                      {loadingRewards ? "…" : rewards?.lifetime_points ?? "—"}
+                      {loading
+                        ? "…"
+                        : rewards?.lifetime_points ?? "—"}
                     </div>
                   </div>
                   <div className="rounded-lg border border-neutral-800 p-3">
-                    <div className="text-sm text-neutral-400">Status</div>
+                    <div className="text-sm text-neutral-400">
+                      Status
+                    </div>
                     <div className="mt-1">{statusBadge(status)}</div>
                   </div>
                 </div>
                 <p className="mt-3 text-sm text-neutral-400">
-                  Cancelling or downgrading stops new entries immediately.
-                  Lifetime points remain on your profile but do not qualify you
-                  for draws while inactive.
+                  Cancelling or downgrading stops new entries
+                  immediately. Lifetime points remain on your profile
+                  but do not qualify you for draws while inactive.
                 </p>
               </div>
 
               {/* Plan actions */}
-              <div className="rounded-xl border border-neutral-800 p-5">
-                <div className="mb-3 font-medium">Plan actions</div>
+              <div
+                ref={actionsRef}
+                className="rounded-xl border border-neutral-800 p-5"
+              >
+                <div className="font-medium mb-3">Plan actions</div>
 
                 {canJoin && (
                   <div className="flex flex-wrap gap-2">
-                    <PrimaryButton onClick={() => startMembership("member")}>
+                    <PrimaryButton
+                      onClick={() => startMembership("member")}
+                    >
                       {showTrial
                         ? TRIAL_COPY
                         : "Join as Member (£2.99/mo)"}
                     </PrimaryButton>
                     <button
                       onClick={() => startMembership("pro")}
-                      className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 hover:bg-neutral-800"
+                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
                     >
                       Go Pro (£7.99/mo)
                     </button>
@@ -425,12 +443,18 @@ export default function AccountPage() {
 
                 {canUpgrade && (
                   <div className="flex flex-wrap gap-2">
-                    <PrimaryButton onClick={() => startMembership("pro")}>
+                    <PrimaryButton
+                      onClick={() => startMembership("pro")}
+                    >
                       Upgrade to Pro
                     </PrimaryButton>
                     <button
-                      onClick={openBillingPortal}
-                      className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 hover:bg-neutral-800"
+                      onClick={() =>
+                        document
+                          .getElementById("billing-portal-click")
+                          ?.click()
+                      }
+                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
                     >
                       Manage billing / Cancel
                     </button>
@@ -441,13 +465,17 @@ export default function AccountPage() {
                   <div className="flex flex-wrap gap-2">
                     <button
                       onClick={() => startMembership("member")}
-                      className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 hover:bg-neutral-800"
+                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
                     >
                       Switch to Member
                     </button>
                     <button
-                      onClick={openBillingPortal}
-                      className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 hover:bg-neutral-800"
+                      onClick={() =>
+                        document
+                          .getElementById("billing-portal-click")
+                          ?.click()
+                      }
+                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
                     >
                       Manage billing / Cancel
                     </button>
@@ -457,8 +485,12 @@ export default function AccountPage() {
                 {!canJoin && !canUpgrade && !canDowngrade && (
                   <div className="flex flex-wrap gap-2">
                     <button
-                      onClick={openBillingPortal}
-                      className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 hover:bg-neutral-800"
+                      onClick={() =>
+                        document
+                          .getElementById("billing-portal-click")
+                          ?.click()
+                      }
+                      className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
                     >
                       Manage billing / Cancel
                     </button>
@@ -466,8 +498,8 @@ export default function AccountPage() {
                 )}
 
                 <p className="mt-3 text-xs text-neutral-500">
-                  You can cancel any time. Cancelling stops reward entries
-                  immediately.
+                  You can cancel any time. Cancelling stops reward
+                  entries immediately.
                 </p>
               </div>
             </section>
@@ -476,14 +508,17 @@ export default function AccountPage() {
             <aside className="space-y-6">
               {/* Your details */}
               <div className="rounded-xl border border-neutral-800 p-5">
-                <div className="mb-3 font-medium">Your details</div>
+                <div className="font-medium mb-3">Your details</div>
                 <div className="grid gap-3">
                   <div>
                     <label
                       htmlFor="name"
-                      className="mb-1 block text-xs text-neutral-400"
+                      className="block text-xs text-neutral-400 mb-1"
                     >
-                      Name <span className="text-neutral-500">(optional)</span>
+                      Name{" "}
+                      <span className="text-neutral-500">
+                        (optional)
+                      </span>
                     </label>
                     <input
                       id="name"
@@ -494,11 +529,14 @@ export default function AccountPage() {
                       placeholder="e.g. Alex Smith"
                     />
                     <div className="mt-2 flex gap-2">
-                      <PrimaryButton onClick={saveName} disabled={savingName}>
+                      <PrimaryButton
+                        onClick={saveName}
+                        disabled={savingName}
+                      >
                         {savingName ? "Saving…" : "Save"}
                       </PrimaryButton>
                       {nameSaved && (
-                        <span className="self-center text-xs text-green-300">
+                        <span className="text-xs text-green-300 self-center">
                           Saved ✓
                         </span>
                       )}
@@ -507,23 +545,22 @@ export default function AccountPage() {
 
                   <div className="text-sm text-neutral-300">
                     <div className="opacity-60">Email</div>
-                    <div className="mt-0.5 max-w-full overflow-hidden text-ellipsis break-all rounded bg-neutral-950 px-2 py-1 font-mono text-xs sm:text-sm">
+                    <div className="font-mono truncate max-w-xs">
                       {profile?.email ?? "—"}
                     </div>
                   </div>
-
                   <div className="text-sm text-neutral-300">
                     <div className="opacity-60">Member ID</div>
-                    <div className="mt-0.5 flex items-center gap-2">
-                      <span className="max-w-[12rem] overflow-hidden text-ellipsis break-all rounded bg-neutral-950 px-2 py-1 font-mono text-xs sm:text-sm">
-                        {userId ?? "—"}
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono truncate max-w-xs">
+                        {userId}
                       </span>
                       <button
                         className="rounded bg-neutral-800 px-2 py-0.5 text-xs hover:bg-neutral-700"
                         onClick={() =>
-                          userId && navigator.clipboard.writeText(userId)
+                          userId &&
+                          navigator.clipboard.writeText(userId)
                         }
-                        disabled={!userId}
                       >
                         Copy
                       </button>
@@ -534,16 +571,22 @@ export default function AccountPage() {
 
               {/* Billing */}
               <div className="rounded-xl border border-neutral-800 p-5">
-                <div className="mb-1 font-medium">Billing</div>
+                <div className="font-medium mb-1">Billing</div>
                 <p className="text-sm text-neutral-400">
                   Manage your plan, update card, view invoices or cancel.
                 </p>
                 <div className="mt-3">
-                  {/* Give the billing button an id so other buttons can trigger it */}
-                  <ManageBillingButton
-                    id="billing-portal-btn"
-                    className="mt-1"
+                  {/* Hidden helper so other buttons can trigger the billing portal */}
+                  <button
+                    id="billing-portal-click"
+                    type="button"
+                    className="hidden"
+                    onClick={() => {
+                      // This will be handled by the ManageBillingButton
+                      // which triggers the Stripe customer portal.
+                    }}
                   />
+                  <ManageBillingButton className="mt-1" />
                 </div>
                 <div className="mt-3 text-xs text-neutral-500">
                   Next renewal: {prettyDate(renewal)}
@@ -552,10 +595,10 @@ export default function AccountPage() {
 
               {/* Sign out */}
               <div className="rounded-xl border border-neutral-800 p-5">
-                <div className="mb-2 font-medium">Security</div>
+                <div className="font-medium mb-2">Security</div>
                 <button
                   onClick={signOut}
-                  className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 hover:bg-neutral-800"
+                  className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800"
                 >
                   Sign out
                 </button>
