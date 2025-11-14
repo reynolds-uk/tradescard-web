@@ -5,11 +5,7 @@ import { useCallback, useState } from "react";
 import { useMe } from "@/lib/useMe";
 import { useMeReady } from "@/lib/useMeReady";
 import { routeToJoin } from "@/lib/routeToJoin";
-
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_API_BASE ||
-  "https://tradescard-api.vercel.app";
+import { API_BASE } from "@/lib/apiBase";
 
 type Cycle = "month" | "year";
 type Plan = "member" | "pro";

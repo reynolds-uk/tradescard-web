@@ -12,15 +12,13 @@ import { useMeReady } from "@/lib/useMeReady";
 import { routeToJoin } from "@/lib/routeToJoin";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 import { track } from "@/lib/track";
-
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_API_BASE ||
-  "https://tradescard-api.vercel.app";
-
-type Tier = "access" | "member" | "pro";
-type AppStatus = "free" | "trial" | "paid" | "inactive";
-const isActiveStatus = (s?: string) => s === "paid" || s === "trial";
+import { API_BASE } from "@/lib/apiBase";
+import {
+  type Tier,
+  type AppStatus,
+  isPaidTier,
+  isActiveStatus,
+} from "@/lib/subscription";
 
 type NudgeSource = "banner" | "sticky" | "card" | "empty" | "teaser";
 
@@ -38,8 +36,7 @@ export default function OffersPage() {
   const status: AppStatus = (me?.status as AppStatus) ?? "free";
 
   const isLoggedIn = !!me?.user;
-  const isPaidTier = tier === "member" || tier === "pro";
-  const isActivePaid = isPaidTier && isActiveStatus(status);
+  const isActivePaid = isPaidTier(tier) && isActiveStatus(status);
   const showTrial = shouldShowTrial(me);
 
   /* Where to bounce back after checkout/auth */

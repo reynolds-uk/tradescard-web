@@ -1,31 +1,29 @@
 // app/lib/track.ts
 
 export type TrackEvent =
-  | "welcome_view"
-  | "welcome_cta_offers"
-  | "welcome_cta_benefits"
-  | "welcome_cta_rewards"
-  | "welcome_cta_join_member"
-  | "offers_nudge_upgrade_click"
-  | "offer_click"
-  | "offers_nudge_join_free_click"
-  | "join_member_click"
-  | "join_pro_click"
-  | "join_free_click"
-  | "welcome_profile_saved"
-  | "welcome_skip"
-  // NEW: checkout + activation + success states
-  | "checkout_start"
+  | "account_manage_billing_click"
+  | "activation_finalised"
+  | "activation_link_resend"
+  | "activation_link_sent"
   | "checkout_fail"
   | "checkout_return_pending"
-  | "activation_link_sent"
-  | "activation_link_resend"
-  | "activation_finalised"
-    | /* existing ones */ "welcome_skip"
-  | "account_manage_billing_click"
+  | "checkout_start"
+  | "join_free_click"
+  | "join_member_click"
+  | "join_pro_click"
+  | "offer_click"
+  | "offers_nudge_join_free_click"
+  | "offers_nudge_upgrade_click"
+  | "success_poll_error"
   | "success_poll_ready"
   | "success_poll_timeout"
-  | "success_poll_error";
+  | "welcome_cta_benefits"
+  | "welcome_cta_join_member"
+  | "welcome_cta_offers"
+  | "welcome_cta_rewards"
+  | "welcome_profile_saved"
+  | "welcome_skip"
+  | "welcome_view";
 
 // Keep implementation simple; your analytics layer can hook the CustomEvent.
 export function track(

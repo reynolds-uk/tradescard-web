@@ -3,8 +3,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
-
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import PrimaryButton from "@/components/PrimaryButton";
@@ -12,6 +10,7 @@ import { useMe } from "@/lib/useMe";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 import { track } from "@/lib/track";
 import { API_BASE } from "@/lib/apiBase";
+import { getSupabaseBrowserClient } from "@/lib/supabaseBrowserClient";
 
 type Plan = "access" | "member" | "pro";
 type PaidPlan = Exclude<Plan, "access">;
@@ -78,14 +77,7 @@ export default function JoinPage() {
   const freeInputRef = useRef<HTMLInputElement>(null);
 
   // Supabase client
-  const supabase = useMemo(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
-    []
-  );
+  const supabase = useMemo(getSupabaseBrowserClient, []);
 
   /* -------------------- Initialise from URL (once) -------------------- */
   useEffect(() => {

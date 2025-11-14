@@ -2,7 +2,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
 
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
@@ -12,6 +11,8 @@ import { routeToJoin } from "@/lib/routeToJoin";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 import { useSessionUser, useProfile, useMember } from "@/lib/data";
 import { API_BASE } from "@/lib/apiBase";
+import { normaliseToE164, formatForDisplay } from "@/lib/phone";
+import { getSupabaseBrowserClient } from "@/lib/supabaseBrowserClient";
 
 type Tier = "access" | "member" | "pro";
 
@@ -93,16 +94,10 @@ export default function AccountPage() {
   const renewal = member?.current_period_end ?? null;
   const showTrial = shouldShowTrial({ tier } as any);
   const isSignedIn = !!userId;
+  const profilePhone = (profile as any)?.phone as string | undefined;
 
   // Supabase (sign-out + profile update)
-  const supabase = useMemo(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      ),
-    [],
-  );
+  const supabase = useMemo(getSupabaseBrowserClient, []);
 
   // Local UI state
   const [ready, setReady] = useState(false);
@@ -110,9 +105,8 @@ export default function AccountPage() {
 
   // Profile fields
   const [name, setName] = useState(profile?.name ?? "");
-  const [phone, setPhone] = useState((profile as any)?.phone ?? "");
-  const [editingName, setEditingName] = useState(!profile?.name);
-  const [editingPhone, setEditingPhone] = useState(!(profile as any)?.phone);
+  const [phone, setPhone] = useState(profilePhone ?? "");
+  const [editingDetails, setEditingDetails] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
 
@@ -127,14 +121,9 @@ export default function AccountPage() {
   // When profile changes (first load / refresh) seed form + editing flags
   useEffect(() => {
     setName(profile?.name ?? "");
-    setEditingName(!profile?.name);
-  }, [profile?.name]);
-
-  useEffect(() => {
-    const p = (profile as any)?.phone as string | undefined;
-    setPhone(p ?? "");
-    setEditingPhone(!p);
-  }, [(profile as any)?.phone]);
+    setPhone(profilePhone ?? "");
+    setEditingDetails(false);
+  }, [profile?.name, profilePhone]);
 
   // Load rewards once signed in
   useEffect(() => {
@@ -199,6 +188,7 @@ export default function AccountPage() {
       setProfileSaved(false);
       setError("");
 
+      const normalisedPhone = phone ? normaliseToE164(phone, "GB") : "";
       const { error: upErr } = await supabase
         .from("profiles")
         .upsert(
@@ -206,8 +196,7 @@ export default function AccountPage() {
             user_id: userId,
             email: profile?.email ?? null,
             name: name || null,
-            // assumes a `phone` column exists on profiles
-            phone: phone || null,
+            phone: normalisedPhone || null,
             updated_at: new Date().toISOString(),
           },
           { onConflict: "user_id" },
@@ -215,8 +204,8 @@ export default function AccountPage() {
 
       if (upErr) throw upErr;
 
-      setEditingName(false);
-      setEditingPhone(false);
+      setPhone(normalisedPhone);
+      setEditingDetails(false);
       setProfileSaved(true);
       setTimeout(() => setProfileSaved(false), 2000);
     } catch (e: any) {
@@ -228,10 +217,14 @@ export default function AccountPage() {
 
   const resetProfileEdits = () => {
     setName(profile?.name ?? "");
-    const p = (profile as any)?.phone as string | undefined;
+    const p = profilePhone;
     setPhone(p ?? "");
-    setEditingName(!profile?.name);
-    setEditingPhone(!p);
+    setEditingDetails(false);
+    setProfileSaved(false);
+  };
+
+  const beginEditDetails = () => {
+    setEditingDetails(true);
     setProfileSaved(false);
   };
 
@@ -496,30 +489,28 @@ export default function AccountPage() {
             <aside className="space-y-6">
               {/* Your details */}
               <div className="rounded-xl border border-neutral-800 p-5">
-                <div className="font-medium mb-3">Your details</div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="font-medium">Your details</div>
+                  {!editingDetails && (
+                    <button
+                      type="button"
+                      onClick={beginEditDetails}
+                      className="text-xs text-neutral-400 hover:text-neutral-200 underline underline-offset-2"
+                    >
+                      Edit details
+                    </button>
+                  )}
+                </div>
                 <div className="grid gap-4">
-                  {/* Name row */}
+                  {/* Name */}
                   <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label
-                        htmlFor="name"
-                        className="block text-xs text-neutral-400"
-                      >
-                        Name{" "}
-                        <span className="text-neutral-500">(optional)</span>
-                      </label>
-                      {!editingName && (
-                        <button
-                          type="button"
-                          onClick={() => setEditingName(true)}
-                          className="text-xs text-neutral-400 hover:text-neutral-200 underline underline-offset-2"
-                        >
-                          Edit
-                        </button>
-                      )}
-                    </div>
-
-                    {editingName ? (
+                    <label
+                      htmlFor="name"
+                      className="block text-xs text-neutral-400 mb-1"
+                    >
+                      Name <span className="text-neutral-500">(optional)</span>
+                    </label>
+                    {editingDetails ? (
                       <input
                         id="name"
                         type="text"
@@ -539,30 +530,18 @@ export default function AccountPage() {
                     )}
                   </div>
 
-                  {/* Phone row */}
+                  {/* Phone (optional) */}
                   <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label
-                        htmlFor="phone"
-                        className="block text-xs text-neutral-400"
-                      >
-                        Phone{" "}
-                        <span className="text-neutral-500">
-                          (recommended for rewards contact)
-                        </span>
-                      </label>
-                      {!editingPhone && (
-                        <button
-                          type="button"
-                          onClick={() => setEditingPhone(true)}
-                          className="text-xs text-neutral-400 hover:text-neutral-200 underline underline-offset-2"
-                        >
-                          Edit
-                        </button>
-                      )}
-                    </div>
-
-                    {editingPhone ? (
+                    <label
+                      htmlFor="phone"
+                      className="block text-xs text-neutral-400 mb-1"
+                    >
+                      Phone{" "}
+                      <span className="text-neutral-500">
+                        (optional, used for wins/support)
+                      </span>
+                    </label>
+                    {editingDetails ? (
                       <>
                         <input
                           id="phone"
@@ -579,7 +558,7 @@ export default function AccountPage() {
                       </>
                     ) : (
                       <div className="text-sm text-neutral-100">
-                        {phone || (
+                        {phone ? formatForDisplay(phone) : (
                           <span className="text-neutral-500">
                             Add a phone number
                           </span>
@@ -588,8 +567,7 @@ export default function AccountPage() {
                     )}
                   </div>
 
-                  {/* Save / cancel for profile fields */}
-                  {(editingName || editingPhone) && (
+                  {editingDetails ? (
                     <div className="flex flex-wrap gap-2">
                       <PrimaryButton
                         onClick={saveProfile}
@@ -604,15 +582,11 @@ export default function AccountPage() {
                       >
                         Cancel
                       </button>
-                      {profileSaved && !savingProfile && (
-                        <span className="text-xs text-green-300 self-center">
-                          Saved ✓
-                        </span>
-                      )}
                     </div>
-                  )}
-                  {!editingName && !editingPhone && profileSaved && (
-                    <div className="text-xs text-green-300">Saved ✓</div>
+                  ) : (
+                    profileSaved && (
+                      <div className="text-xs text-green-300">Saved ✓</div>
+                    )
                   )}
 
                   {/* Email */}

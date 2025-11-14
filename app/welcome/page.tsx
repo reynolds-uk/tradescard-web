@@ -4,13 +4,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
-
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import PrimaryButton from "@/components/PrimaryButton";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 import { track } from "@/lib/track";
+import { getSupabaseBrowserClient } from "@/lib/supabaseBrowserClient";
+import { API_BASE } from "@/lib/apiBase";
 
 // Shared data hooks
 import { useSessionUser, useProfile, useMember } from "@/lib/data";
@@ -38,10 +38,6 @@ const TIER_COPY: Record<Tier, { label: string; blurb: string }> = {
 
 const APP_URL =
   process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ??
-  process.env.NEXT_PUBLIC_API_BASE ??
-  "https://tradescard-api.vercel.app";
 
 /* -------------------------------------------------------------------------------------------------
    Hook: confirm checkout with polling (handles ?cs=... or ?session_id=..., sends OTP if not signed in)
@@ -64,14 +60,7 @@ function useConfirmCheckoutWithPolling(alreadyPaid: boolean) {
   const [resending, setResending] = useState(false);
   const [countdown, setCountdown] = useState(0); // seconds
 
-  const supabase = useMemo(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      ),
-    [],
-  );
+  const supabase = useMemo(getSupabaseBrowserClient, []);
 
   // Track first render
   const tracked = useRef(false);
@@ -294,14 +283,7 @@ export default function WelcomePage() {
   const params = useSearchParams();
   const router = useRouter();
 
-  const supabase = useMemo(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      ),
-    [],
-  );
+  const supabase = useMemo(getSupabaseBrowserClient, []);
 
   // Confirm checkout if `?cs=` or `?session_id=`
   const {

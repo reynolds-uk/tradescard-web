@@ -6,23 +6,21 @@ import { useRouter } from "next/navigation";
 import { useMe } from "@/lib/useMe";
 import { useMeReady } from "@/lib/useMeReady";
 import Container from "@/components/Container";
-
-type Tier = "access" | "member" | "pro";
-type AppStatus = "free" | "trial" | "paid" | "inactive";
-
-function isActivePaid(tier?: Tier, status?: AppStatus) {
-  if (!tier || !status) return false;
-  const paidTier = tier === "member" || tier === "pro";
-  const okStatus = status === "paid" || status === "trial";
-  return paidTier && okStatus;
-}
+import {
+  type Tier,
+  type AppStatus,
+  isPaidTier,
+  isActiveStatus,
+} from "@/lib/subscription";
 
 export default function MemberLayout({ children }: { children: React.ReactNode }) {
   const me = useMe();
   const ready = useMeReady();
   const router = useRouter();
 
-  const allowed = isActivePaid(me?.tier as Tier | undefined, me?.status as AppStatus | undefined);
+  const tier = me?.tier as Tier | undefined;
+  const status = me?.status as AppStatus | undefined;
+  const allowed = isPaidTier(tier) && isActiveStatus(status);
 
   useEffect(() => {
     if (!ready) return;

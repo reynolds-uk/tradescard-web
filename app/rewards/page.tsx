@@ -10,13 +10,12 @@ import { useMe } from "@/lib/useMe";
 import { useMeReady } from "@/lib/useMeReady";
 import { routeToJoin } from "@/lib/routeToJoin";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
-
-// If you created lib/status.ts, use these imports instead:
-// import { AppStatus, isActiveStatus } from "@/lib/status";
-
-type Tier = "access" | "member" | "pro";
-type AppStatus = "free" | "trial" | "paid" | "inactive";
-const isActiveStatus = (s?: string) => s === "paid" || s === "trial";
+import {
+  type Tier,
+  type AppStatus,
+  isPaidTier,
+  isActiveStatus,
+} from "@/lib/subscription";
 
 export default function RewardsPage() {
   const router = useRouter();
@@ -26,8 +25,7 @@ export default function RewardsPage() {
   const tier: Tier = (me?.tier as Tier) ?? "access";
   const status: AppStatus = (me?.status as AppStatus) ?? "free";
 
-  const isPaidTier = tier === "member" || tier === "pro";
-  const isPaid = isPaidTier && isActiveStatus(status);
+  const isPaid = isPaidTier(tier) && isActiveStatus(status);
 
   const showTrial = shouldShowTrial(me);
 
