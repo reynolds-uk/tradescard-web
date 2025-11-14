@@ -104,7 +104,7 @@ export default function AccountPage() {
     [],
   );
 
-  // Local state
+  // Local UI state
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -120,6 +120,7 @@ export default function AccountPage() {
 
   const [rewards, setRewards] = useState<RewardsSummary | null>(null);
   const actionsRef = useRef<HTMLDivElement | null>(null);
+  const billingRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => setReady(true), []);
 
@@ -263,11 +264,8 @@ export default function AccountPage() {
     if (canJoin) return startMembership("member");
     if (canUpgrade) return startMembership("pro");
     if (canDowngrade) {
-      // Call billing portal via the billing card button
-      const btn = document.querySelector<HTMLButtonElement>(
-        'button[data-billing-button="true"]',
-      );
-      btn?.click();
+      // Just scroll to the billing card; user can tap Manage billing there
+      billingRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   };
   const showSticky =
@@ -465,7 +463,6 @@ export default function AccountPage() {
                     <PrimaryButton onClick={() => startMembership("pro")}>
                       Upgrade to Pro
                     </PrimaryButton>
-                    {/* Direct ManageBillingButton so it actually works */}
                     <ManageBillingButton className="px-4 py-2 rounded-lg border border-neutral-700 bg-neutral-900 hover:bg-neutral-800" />
                   </div>
                 )}
@@ -523,19 +520,21 @@ export default function AccountPage() {
                     </div>
 
                     {editingName ? (
-                      <>
-                        <input
-                          id="name"
-                          type="text"
-                          value={name}
-                          onChange={(e) => setName(e.target.value)}
-                          className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
-                          placeholder="e.g. Alex Smith"
-                        />
-                      </>
+                      <input
+                        id="name"
+                        type="text"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        className="w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500"
+                        placeholder="e.g. Alex Smith"
+                      />
                     ) : (
                       <div className="text-sm text-neutral-100">
-                        {name || <span className="text-neutral-500">Add your name</span>}
+                        {name || (
+                          <span className="text-neutral-500">
+                            Add your name
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
@@ -645,18 +644,16 @@ export default function AccountPage() {
               </div>
 
               {/* Billing */}
-              <div className="rounded-xl border border-neutral-800 p-5">
+              <div
+                ref={billingRef}
+                className="rounded-xl border border-neutral-800 p-5"
+              >
                 <div className="font-medium mb-1">Billing</div>
                 <p className="text-sm text-neutral-400">
                   Manage your plan, update card, view invoices or cancel.
                 </p>
                 <div className="mt-3">
-                  {/* This button is the canonical billing trigger; other buttons can click it via data attribute */}
-                  <ManageBillingButton
-                    className="mt-1"
-                    // @ts-expect-error allow data attribute
-                    data-billing-button="true"
-                  />
+                  <ManageBillingButton className="mt-1" />
                 </div>
                 <div className="mt-3 text-xs text-neutral-500">
                   Next renewal: {prettyDate(renewal)}
