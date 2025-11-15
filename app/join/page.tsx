@@ -169,7 +169,7 @@ export default function JoinPage() {
       if (!targetEmail) throw new Error("Email required");
 
       const payload = { plan, cycle, email: targetEmail };
-      const endpoint = `${API_BASE}/api/checkout`;
+      const endpoint = `/api/checkout`;
 
       const res = await fetch(endpoint, {
         method: "POST",

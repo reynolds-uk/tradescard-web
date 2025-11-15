@@ -166,7 +166,7 @@ export default function AccountPage() {
     }
     try {
       setError("");
-      const res = await fetch(`${API_BASE}/api/checkout`, {
+      const res = await fetch(`/api/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ plan, cycle: "month", email: profile?.email }),
