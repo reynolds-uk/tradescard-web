@@ -1,5 +1,5 @@
 // tradescard-web/app/lib/billing.ts
-import { API_BASE } from "./apiBase";
+import { API_BASE } from "./config";
 import { getSupabaseBrowserClient } from "./supabaseBrowserClient";
 
 export async function openBillingPortal(returnUrl = "/account") {

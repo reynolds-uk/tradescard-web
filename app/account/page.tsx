@@ -10,7 +10,7 @@ import ManageBillingButton from "@/components/ManageBillingButton";
 import { routeToJoin } from "@/lib/routeToJoin";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 import { useSessionUser, useProfile, useMember } from "@/lib/data";
-import { API_BASE } from "@/lib/apiBase";
+import { API_BASE } from "@/lib/config";
 import { normaliseToE164, formatForDisplay } from "@/lib/phone";
 import { getSupabaseBrowserClient } from "@/lib/supabaseBrowserClient";
 

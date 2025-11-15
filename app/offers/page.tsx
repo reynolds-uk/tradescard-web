@@ -12,7 +12,7 @@ import { useMeReady } from "@/lib/useMeReady";
 import { routeToJoin } from "@/lib/routeToJoin";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 import { track } from "@/lib/track";
-import { API_BASE } from "@/lib/apiBase";
+import { API_BASE } from "@/lib/config";
 import {
   type Tier,
   type AppStatus,

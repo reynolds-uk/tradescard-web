@@ -1,7 +1,7 @@
 "use server";
 
 import { NextRequest, NextResponse } from "next/server";
-import { API_BASE } from "@/lib/apiBase";
+import { API_BASE } from "@/lib/config";
 
 const CHECKOUT_URL = `${API_BASE}/api/checkout`;
 

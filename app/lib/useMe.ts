@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type User } from "@supabase/supabase-js";
-import { API_BASE } from "./apiBase"; // <-- now imported from your new helper
+import { API_BASE } from "./config"; // <-- now imported from your new helper
 import { getSupabaseBrowserClient } from "./supabaseBrowserClient";
 
 type Tier = "access" | "member" | "pro";

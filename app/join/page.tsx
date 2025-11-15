@@ -9,14 +9,13 @@ import PrimaryButton from "@/components/PrimaryButton";
 import { useMe } from "@/lib/useMe";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 import { track } from "@/lib/track";
-import { API_BASE } from "@/lib/apiBase";
+import { API_BASE, SITE_URL } from "@/lib/config";
 import { getSupabaseBrowserClient } from "@/lib/supabaseBrowserClient";
 
 type Plan = "access" | "member" | "pro";
 type PaidPlan = Exclude<Plan, "access">;
 type Cycle = "month" | "year";
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
 
 // Display prices (UI only; Stripe uses server prices)
 const PRICE = {
@@ -148,7 +147,7 @@ export default function JoinPage() {
     if (!trimmed || !isValidEmail(trimmed)) throw new Error("invalid_email");
     const { error: supaErr } = await supabase.auth.signInWithOtp({
       email: trimmed,
-      options: { emailRedirectTo: new URL(redirectTo, APP_URL).toString() },
+      options: { emailRedirectTo: new URL(redirectTo, SITE_URL).toString() },
     });
     if (supaErr) throw supaErr;
   }

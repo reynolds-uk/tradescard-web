@@ -9,6 +9,7 @@ import PageHeader from "@/components/PageHeader";
 import PrimaryButton from "@/components/PrimaryButton";
 import { useMe } from "@/lib/useMe";
 import { useMeReady } from "@/lib/useMeReady";
+import { API_BASE } from "@/lib/config";
 
 type Tier = "access" | "member" | "pro";
 type AppStatus = "free" | "trial" | "paid" | "inactive";
@@ -18,11 +19,6 @@ type RewardsSummary = {
   lifetime_points: number;
   points_this_month: number;
 };
-
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_API_BASE ||
-  "https://tradescard-api.vercel.app";
 
 export default function MemberRewardsPage() {
   const router = useRouter();

@@ -5,7 +5,7 @@ import { useCallback, useState } from "react";
 import { useMe } from "@/lib/useMe";
 import { useMeReady } from "@/lib/useMeReady";
 import { routeToJoin } from "@/lib/routeToJoin";
-import { API_BASE } from "@/lib/apiBase";
+import { API_BASE } from "@/lib/config";
 
 type Cycle = "month" | "year";
 type Plan = "member" | "pro";

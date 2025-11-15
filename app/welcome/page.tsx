@@ -10,7 +10,7 @@ import PrimaryButton from "@/components/PrimaryButton";
 import { shouldShowTrial, TRIAL_COPY } from "@/lib/trial";
 import { track } from "@/lib/track";
 import { getSupabaseBrowserClient } from "@/lib/supabaseBrowserClient";
-import { API_BASE } from "@/lib/apiBase";
+import { API_BASE, SITE_URL } from "@/lib/config";
 
 // Shared data hooks
 import { useSessionUser, useProfile, useMember } from "@/lib/data";
@@ -36,8 +36,7 @@ const TIER_COPY: Record<Tier, { label: string; blurb: string }> = {
   },
 };
 
-const APP_URL =
-  process.env.NEXT_PUBLIC_APP_URL ?? "https://tradescard-web.vercel.app";
+const APP_URL = SITE_URL;
 
 /* -------------------------------------------------------------------------------------------------
    Hook: confirm checkout with polling (handles ?cs=... or ?session_id=..., sends OTP if not signed in)
