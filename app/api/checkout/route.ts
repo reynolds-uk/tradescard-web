@@ -29,27 +29,27 @@ export async function POST(req: NextRequest) {
       cache: "no-store",
     });
 
-    let data: unknown;
+    let json: any = null;
     try {
-      data = await apiRes.json();
+      json = await apiRes.json();
     } catch {
-      data = null;
-    }
-
-    if (data === null) {
       const text = await apiRes.text();
-      return new NextResponse(text, {
-        status: apiRes.status,
-        headers: {
-          "Content-Type":
-            apiRes.headers.get("content-type") ?? "application/json",
-        },
-      });
+      json = { error: "upstream_error", raw: text };
     }
 
-    return NextResponse.json(data, { status: apiRes.status });
+    if (!apiRes.ok) {
+      return NextResponse.json(
+        { error: "checkout_upstream_failed", upstream: json },
+        { status: apiRes.status },
+      );
+    }
+
+    return NextResponse.json(json, { status: apiRes.status });
   } catch (error: any) {
     console.error("checkout proxy failed", error);
-    return NextResponse.json({ error: "checkout_proxy_failed" }, { status: 500 });
+    return NextResponse.json(
+      { error: "checkout_proxy_failed", details: error?.message ?? "unknown" },
+      { status: 500 },
+    );
   }
 }

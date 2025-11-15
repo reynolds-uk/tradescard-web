@@ -51,10 +51,16 @@ export function useJoinActions(source: string = "/join") {
           keepalive: true,
         });
 
-        const json = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+        const json = (await res.json().catch(() => ({}))) as {
+          url?: string;
+          error?: string;
+          upstream?: { error?: string; [key: string]: any };
+        };
 
         if (!res.ok || !json?.url) {
-          throw new Error(json?.error || `Checkout failed (${res.status})`);
+          const upstreamMsg = json?.upstream?.error;
+          const message = json?.error || upstreamMsg || `Checkout failed (${res.status})`;
+          throw new Error(message);
         }
 
         window.location.href = json.url!;
