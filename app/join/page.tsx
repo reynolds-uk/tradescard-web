@@ -165,7 +165,7 @@ export default function JoinPage() {
       const body: any = { plan, cycle };
       if (email) body.email = email;
 
-      const endpoint = email ? `${API_BASE}/api/checkout` : `/api/checkout`;
+      const endpoint = "/api/checkout";
 
       const res = await fetch(endpoint, {
         method: "POST",
