@@ -3,13 +3,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
 import Container from "@/components/Container";
 import PageHeader from "@/components/PageHeader";
 import PrimaryButton from "@/components/PrimaryButton";
 import { useMe } from "@/lib/useMe";
 import { useMeReady } from "@/lib/useMeReady";
 import { routeToJoin } from "@/lib/routeToJoin";
+import { getSupabaseBrowserClient } from "@/lib/supabaseBrowserClient";
 
 type Tier = "access" | "member" | "pro";
 type AppStatus = "free" | "trial" | "paid" | "inactive";
@@ -49,14 +49,7 @@ export default function MemberBenefitsPage() {
   // ──────────────────────────────────────────────────────
   // Fetch benefits directly from Supabase (active only)
   // ──────────────────────────────────────────────────────
-  const supabase = useMemo(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
-    []
-  );
+  const supabase = useMemo(getSupabaseBrowserClient, []);
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>("");

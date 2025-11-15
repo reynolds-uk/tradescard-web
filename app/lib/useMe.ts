@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createClient, type User } from "@supabase/supabase-js";
+import { type User } from "@supabase/supabase-js";
 import { API_BASE } from "./apiBase"; // <-- now imported from your new helper
+import { getSupabaseBrowserClient } from "./supabaseBrowserClient";
 
 type Tier = "access" | "member" | "pro";
 
@@ -64,14 +65,7 @@ async function fetchAccount(userId: string): Promise<ApiAccount | null> {
 }
 
 export function useMe(): Me {
-  const supabase = useMemo(
-    () =>
-      createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
-    []
-  );
+  const supabase = useMemo(getSupabaseBrowserClient, []);
 
   const [me, setMe] = useState<Me>({
     tier: "access",

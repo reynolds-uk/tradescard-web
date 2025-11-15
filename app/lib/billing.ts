@@ -1,12 +1,9 @@
 // tradescard-web/app/lib/billing.ts
-import { createClient } from "@supabase/supabase-js";
 import { API_BASE } from "./apiBase";
+import { getSupabaseBrowserClient } from "./supabaseBrowserClient";
 
 export async function openBillingPortal(returnUrl = "/account") {
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  const supabase = getSupabaseBrowserClient();
 
   const { data } = await supabase.auth.getSession();
   const accessToken = data?.session?.access_token;
