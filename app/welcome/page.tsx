@@ -368,11 +368,10 @@ export default function WelcomePage() {
 
   async function resumeCheckout() {
     try {
-      const res = await fetch(`/api/checkout`, {
+      const res = await fetch(`${API_BASE}/api/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ plan: wantedPlan, cycle: wantedCycle }),
+        body: JSON.stringify({ plan: wantedPlan, cycle: wantedCycle, email: profile?.email }),
       });
       const data = await res.json();
       if (!res.ok || !data?.url)

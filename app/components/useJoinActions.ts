@@ -36,17 +36,13 @@ export function useJoinActions(source: string = "/join") {
       try {
         setBusy(true);
 
-        const res = await fetch(`/api/checkout`, {
+        const res = await fetch(`${API_BASE}/api/checkout`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            user_id: me.user.id,
-            email: me.email,
             plan,
-            billing: cycle === "year" ? "annual" : "monthly",
-            trial: !!opts?.trial,
-            next: opts?.next || "/welcome",
-            source, // diagnostic only
+            cycle,
+            email: me.email,
           }),
           keepalive: true,
         });

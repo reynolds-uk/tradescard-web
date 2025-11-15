@@ -154,24 +154,27 @@ export default function JoinPage() {
 
   /**
    * Start paid checkout.
-   * - If email provided → guest flow via API_BASE (CORS) → Stripe
-   * - If no email provided (already signed in) → web /api/checkout → Stripe
+   * - Always call the tradescard API checkout endpoint with plan/cycle/email.
    */
   async function startPaidCheckout(plan: PaidPlan, email?: string) {
     try {
       setBusy(true);
       setCheckoutError("");
 
-      const body: any = { plan, cycle };
-      if (email) body.email = email;
+      let targetEmail = (email || "").trim();
+      if (!targetEmail) {
+        const { data } = await supabase.auth.getSession();
+        targetEmail = data?.session?.user?.email?.trim() ?? "";
+      }
+      if (!targetEmail) throw new Error("Email required");
 
-      const endpoint = "/api/checkout";
+      const payload = { plan, cycle, email: targetEmail };
+      const endpoint = `${API_BASE}/api/checkout`;
 
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        credentials: email ? "omit" : "include",
-        body: JSON.stringify(body),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
